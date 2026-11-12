@@ -191,6 +191,7 @@ import {
 } from './mcp-call-log.ts'
 import { mountMcpCallLogRoutes } from './mcp-call-log-routes.ts'
 import { runEachRetention } from './log-retention.ts'
+import { reportEventsTotalsFailure, runEventsTotalsMaintenance } from './events-totals-maintenance.ts'
 import {
   executeBudgetedExactQuery,
   isPublicExactReadBusy,
@@ -1046,10 +1047,12 @@ mountPaymentRecoveryRoutes(app, {
   privateView: paymentRecoveryRuntime.privateView,
   recheck: paymentRecoveryRuntime.recheck,
   runBatch: paymentRecoveryRuntime.runBatch,
-  // Decision #141 adds the call log purge beside the runtime log purge.
+  // Decision #141 adds the call log purge beside the runtime log purge; decision #196
+  // adds the kept events tally's fold and checks, which no read uses yet.
   runMaintenance: async () => await runEachRetention([
     { run: () => runRuntimeLogRetention(runtimeDatabase), report: reportRuntimeLogRetentionFailure },
     { run: () => runMcpCallLogRetention(runtimeDatabase), report: reportMcpCallLogRetentionFailure },
+    { run: () => runEventsTotalsMaintenance(runtimeDatabase, process.env), report: reportEventsTotalsFailure },
   ]),
   reportMaintenanceFailure: reportRuntimeLogRetentionFailure,
   reportFailure: reportPaymentRecoveryRecheckFailure,

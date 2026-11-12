@@ -57,6 +57,8 @@
     "migrate:production:mcp-call-log": "node --experimental-strip-types scripts/migrate.ts --target production --migration mcp-call-log",
     "migrate:preview:mcp-call-log-app-door": "node --experimental-strip-types scripts/migrate.ts --target preview --migration mcp-call-log-app-door",
     "migrate:production:mcp-call-log-app-door": "node --experimental-strip-types scripts/migrate.ts --target production --migration mcp-call-log-app-door",
+    "migrate:preview:events-totals-tally": "node --experimental-strip-types scripts/migrate.ts --target preview --migration events-totals-tally",
+    "migrate:production:events-totals-tally": "node --experimental-strip-types scripts/migrate.ts --target production --migration events-totals-tally",
     "migrate:preview:moderation-holds": "node --experimental-strip-types scripts/migrate.ts --target preview --migration moderation-holds",
     "migrate:production:moderation-holds": "node --experimental-strip-types scripts/migrate.ts --target production --migration moderation-holds",
     "migrate:preview:moderation-reviews": "node --experimental-strip-types scripts/migrate.ts --target preview --migration moderation-reviews",

@@ -55,6 +55,22 @@ slot during UTC minutes 00–04. That maintenance deletes at most 1,000 rows old
 than 30 days. Its failure is reported with safe metadata and does not change the
 payment-recovery response; the next hourly slot retries another bounded page.
 
+A third maintenance step, in its own try, keeps the events list's settled tally
+(decision #196): it folds at most 10 chunks of 10,000 newly settled events, checks the
+tally's per-kind sum every run, and once every UTC hour, after the first fill, compares the
+tally with a full recount in one read-only snapshot. Nothing answers a caller from it yet.
+Its failure prints one fixed `events_totals_failure` line with the error name and
+PostgreSQL code only. A mismatch prints `events_totals_mismatch` in the runtime logs, and
+`events_totals_state` records `last_check_ok` false and `last_mismatch_at`; that is where a
+person sees one. A kept total below zero is a mismatch like any other. A check that fails
+after claiming its hour prints `events_totals_failure` and records `last_check_ok` false and
+`trusted` false, with `last_mismatch_at` unchanged; nothing is discarded, and the next check
+that matches trusts the tally again. The operator stops the step at once with one recorded write,
+`UPDATE events_totals_state SET paused = TRUE`, and starts it again with `paused = FALSE`;
+after a second mismatch within 24 hours the tally stays untrusted until the operator,
+having found the cause, runs `UPDATE events_totals_state SET held_off = FALSE`.
+`EVENTS_TOTALS_TALLY=off` stops the step everywhere at the next deploy.
+
 Wave 5 does not deploy the schedule, configure the secret, or invoke the live
 route. Those production actions require the separately approved release wave.
 

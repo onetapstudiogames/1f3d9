@@ -5,8 +5,9 @@ import { publicActivityFeedContentSql } from './public-events.ts'
 // lists (search, events, changes, the front door's recent activity, and the
 // mention lookups in me), for every caller, and each of those answers counts what it
 // left out. The room's own reads, read_here, wait_here and every human view are
-// unchanged; place edits are never left out. Pure SQL text and answer shaping: this
-// file imports nothing, so public read builders can use it.
+// unchanged; place edits are never left out. Pure SQL text and answer shaping, so
+// public read builders and the kept events tally (src/events-totals-tally.ts) share
+// one home for the rule.
 
 /** The event kinds that carry a note, line, thing or ping in a room. */
 export const FEED_ROOM_EVENT_KINDS = Object.freeze([
@@ -15,7 +16,26 @@ export const FEED_ROOM_EVENT_KINDS = Object.freeze([
   'thing_withdrawn', 'thing_ended',
 ] as const)
 
-const FEED_ROOM_EVENT_KIND_SQL = FEED_ROOM_EVENT_KINDS.map(kind => `'${kind}'`).join(', ')
+/** SQL list text of the feed kinds, shared with the kept events tally (src/events-totals-tally.ts). */
+export const FEED_ROOM_EVENT_KIND_SQL = FEED_ROOM_EVENT_KINDS.map(kind => `'${kind}'`).join(', ')
+
+/** The activity kinds whose applied outcomes can sit in feed rooms. */
+export const FEED_ROOM_ACTIVITY_KIND_SQL = "'action', 'effect_resolved', 'room_reached', 'wake_try_applied'"
+
+/** A note, line, thing or ping names its room or thing by a detail id of this shape. */
+export const FEED_ROOM_DETAIL_ID_PATTERN = '^[1-9][0-9]{0,8}$'
+
+/** The room one applied outcome names, or null when the id is missing or out of range. */
+export function feedRoomOutcomePlaceSql(outcome: string): string {
+  return `CASE WHEN ${outcome}->>'place_id' ~ '^[1-9][0-9]{0,9}$'
+            THEN CASE WHEN (${outcome}->>'place_id')::numeric <= 2147483647
+              THEN (${outcome}->>'place_id')::integer END END`
+}
+
+/** Whether one applied outcome is thing content, the only kind a feed room keeps out. */
+export function feedRoomOutcomeContentSql(outcome: string): string {
+  return `coalesce(${publicActivityFeedContentSql(outcome)}, false)`
+}
 
 /** The most feed room ids one answer names. */
 export const LEFT_OUT_FEED_ROOM_IDS_MAX = 10
@@ -35,9 +55,9 @@ export function feedRoomIdsSql(exceptPlaceSql: string | null = null): string {
 // caller-shaped JSONB.
 function eventRoomSql(eventAlias: string): string {
   return `CASE
-      WHEN ${eventAlias}.detail->>'place_id' ~ '^[1-9][0-9]{0,8}$'
+      WHEN ${eventAlias}.detail->>'place_id' ~ '${FEED_ROOM_DETAIL_ID_PATTERN}'
         THEN (${eventAlias}.detail->>'place_id')::integer
-      WHEN ${eventAlias}.detail->>'thing_id' ~ '^[1-9][0-9]{0,8}$' THEN (
+      WHEN ${eventAlias}.detail->>'thing_id' ~ '${FEED_ROOM_DETAIL_ID_PATTERN}' THEN (
         SELECT feed_thing.place_id FROM things feed_thing
         WHERE feed_thing.id = (${eventAlias}.detail->>'thing_id')::integer)
     END`
@@ -50,16 +70,14 @@ function eventRoomSql(eventAlias: string): string {
  */
 export function feedRoomEventLateralSql(eventAlias: string, idsSql: string, alias = 'feed'): string {
   return `CROSS JOIN LATERAL (
-    SELECT CASE WHEN ${eventAlias}.kind IN ('action', 'effect_resolved', 'room_reached', 'wake_try_applied')
+    SELECT CASE WHEN ${eventAlias}.kind IN (${FEED_ROOM_ACTIVITY_KIND_SQL})
         AND jsonb_typeof(${eventAlias}.detail->'applied_public_activity') = 'array'
         AND cardinality(${idsSql}) > 0
       THEN (
         SELECT min(affected.place_id)
         FROM (
-          SELECT coalesce(${publicActivityFeedContentSql('outcome')}, false) AS content,
-            CASE WHEN outcome->>'place_id' ~ '^[1-9][0-9]{0,9}$'
-            THEN CASE WHEN (outcome->>'place_id')::numeric <= 2147483647
-              THEN (outcome->>'place_id')::integer END END AS place_id
+          SELECT ${feedRoomOutcomeContentSql('outcome')} AS content,
+            ${feedRoomOutcomePlaceSql('outcome')} AS place_id
           FROM jsonb_array_elements(${eventAlias}.detail->'applied_public_activity') outcome
         ) affected
         HAVING bool_and(affected.content AND coalesce(affected.place_id = ANY(${idsSql}), false))
