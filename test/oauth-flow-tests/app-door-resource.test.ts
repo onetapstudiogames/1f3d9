@@ -18,9 +18,10 @@ import {
 } from './fixture.ts'
 
 const APP_RESOURCE = `${ORIGIN}/mcp/app`
-const APP_DOOR_LINE = "<p><strong>Hosted Chat Flow Test</strong> wants to act as your resident. It cannot rotate the permanent resident key. Paid actions spend the resident's own fee credit.</p>"
-const CONNECT_DOOR_LINE = "<p><strong>Hosted Chat Flow Test</strong> wants to act as your resident. It cannot change the resident key. It can use the resident's fee credit.</p>"
-// The owner asked that this sentence use none of these words or their forms.
+// Decision 195: both hosted doors show this one sentence, word for word.
+const SIGNIN_LINE = "<p><strong>Hosted Chat Flow Test</strong> wants to act as your resident. It cannot change the resident key. It can use the resident's fee credit.</p>"
+const SIGNIN_SENTENCE = /<p><strong>[^<]*<\/strong> wants to act as your resident\.[^<]*<\/p>/u
+// The owner asked that this sentence use none of these words or their forms (decision 195).
 const AVOIDED_WORDS = /spend|spent|money|pay|wallet|buy|bought|purchas|cost|price|pricing|charg|cash|dollar|fund/iu
 
 // Decision 142: /mcp/app is its own protected resource with the same sign-in and clients.
@@ -40,24 +41,26 @@ export function registerAppDoorResourceTests(): void {
     }
   })
 
-  test('the sign-in page names fee credit for /mcp/app and says what a pass can use for /mcp/connect', async () => {
+  test('both sign-in pages say the same true sentence about what a pass can use (decision 195)', async () => {
     const { app } = fixture()
     const appPage = (await begin(app, authorizationUrl({ resource: APP_RESOURCE }))).html
-    // Decision 142 fixes the app door sentence word for word; it stays exactly as before.
-    assert.ok(appPage.includes(APP_DOOR_LINE), 'the app door sentence is unchanged')
+    assert.ok(appPage.includes(SIGNIN_LINE), 'the app door sentence')
     assert.doesNotMatch(appPage, /wallet|payment|USDC|\/buy/iu)
+    assert.doesNotMatch(appPage, /rotate the permanent resident key|Paid actions spend/u)
     const { app: connectApp } = fixture()
     const connectPage = (await begin(connectApp, authorizationUrl({ resource: RESOURCE }))).html
-    assert.ok(connectPage.includes(CONNECT_DOOR_LINE), 'the chat door sentence says what a pass can really use')
+    assert.ok(connectPage.includes(SIGNIN_LINE), 'the chat door sentence')
     assert.doesNotMatch(connectPage, /separate wallet approval|bypass payment rules/u)
   })
 
-  test('the chat door sign-in sentence avoids words that can set off chat app filters', async () => {
-    const { app } = fixture()
-    const connectPage = (await begin(app, authorizationUrl({ resource: RESOURCE }))).html
-    const sentence = connectPage.match(/<p><strong>[^<]*<\/strong> wants to act as your resident\.[^<]*<\/p>/u)?.[0]
-    assert.ok(sentence, 'the chat door page has its sign-in sentence')
-    assert.doesNotMatch(sentence, AVOIDED_WORDS)
+  test('neither sign-in sentence uses a word that can set off chat app filters (decision 195)', async () => {
+    for (const resource of [RESOURCE, APP_RESOURCE]) {
+      const { app } = fixture()
+      const page = (await begin(app, authorizationUrl({ resource }))).html
+      const sentence = page.match(SIGNIN_SENTENCE)?.[0]
+      assert.ok(sentence, `${resource} has its sign-in sentence`)
+      assert.doesNotMatch(sentence, AVOIDED_WORDS, resource)
+    }
   })
 
   test('an existing resident signs in for /mcp/app, and that token works only at the app door', async () => {

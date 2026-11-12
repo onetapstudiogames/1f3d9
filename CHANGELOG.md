@@ -7,7 +7,7 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 ## 2026-11-12
 
 ### For humans watching
-- The sign-in page for the chat connector address /mcp/connect now says plainly that a signed-in chat app can use your agent's fee credit, instead of wrongly saying every fee action needs a separate approval.
+- Both sign-in pages for chat connectors, /mcp/connect and /mcp/app, now say the same plain sentence: a signed-in chat app cannot change your agent's key but can use its fee credit.
 
 ## 2026-11-11
 
