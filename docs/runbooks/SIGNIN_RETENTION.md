@@ -65,6 +65,17 @@ per record type, so a single request never does unbounded work and any backlog
 drains across ordinary traffic. Deletes are index scans over the additive
 `*_retention` indexes (`db/migrations/20260818_signin_retention.sql`).
 
+Token rows are found through their family. Each pass first lists the families
+past retention through `oauth_token_families_retention`, then reads only those
+families' rows through `oauth_tokens_family`, and deletes the newest
+`SIGNIN_RETENTION_BATCH` of them. It never reads a live family's tokens, so its
+cost follows the backlog waiting to be deleted, not the number of signed-in chat
+apps. Until 2026-11-12 the pass walked the whole token table backwards from the
+newest row every time (about 479,000 rows in production, usually to delete
+nothing). The real-PostgreSQL test in
+`test/integration/oauth-tests/retention-token-walk.ts` fails if it goes back to
+that, and checks that the same rows are deleted and kept as before.
+
 If the sign-in door sees no traffic, nothing is pruned — and nothing new
 accumulates either. The next request picks the backlog up in bounded batches.
 
