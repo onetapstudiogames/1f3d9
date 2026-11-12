@@ -4,10 +4,13 @@ import { readFileSync } from 'node:fs'
 
 const source = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8')
 
-test('cost tripwire runs weekly or manually from reviewed code with least privilege', () => {
+test('cost tripwire runs every day or manually from reviewed code with least privilege', () => {
   const workflow = source('.github/workflows/cost-tripwire.yml')
 
-  assert.match(workflow, /schedule:\s*\n\s*- cron:\s*['"][^'"]+['"]/u)
+  assert.match(workflow, /schedule:\s*\n(?:\s*#[^\n]*\n)*\s*- cron:\s*'23 14 \* \* \*'/u)
+  assert.match(workflow, /pull-requests:\s*read/u)
+  assert.equal(workflow.match(/GITHUB_TOKEN:\s*\$\{\{ github\.token \}\}/gu)?.length, 2,
+    'both the normal and the dry-run step read open pull requests')
   assert.match(workflow, /workflow_dispatch:[\s\S]*dry-run/iu)
   assert.match(workflow, /^permissions:\s*\{\}\s*$/mu)
   assert.match(workflow, /contents:\s*read/u)

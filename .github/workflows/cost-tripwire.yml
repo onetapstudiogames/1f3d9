@@ -2,11 +2,13 @@ name: Cost tripwire
 
 on:
   schedule:
-    - cron: '23 14 * * 1'
+    # Every day. A red run (a limit crossed or a provider read that did not work) ends
+    # with a non-zero exit, so GitHub emails a failed-run notice, and it opens a dated issue.
+    - cron: '23 14 * * *'
   workflow_dispatch:
     inputs:
       dry-run:
-        description: Read providers and print the issue update without writing it
+        description: Read providers and print the report without opening or changing an issue
         required: true
         default: true
         type: boolean
@@ -24,6 +26,7 @@ jobs:
     permissions:
       contents: read
       issues: write
+      pull-requests: read
     steps:
       - name: Check out reviewed default-branch code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -46,11 +49,12 @@ jobs:
           NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID }}
           GITHUB_TOKEN: ${{ github.token }}
         run: npm run cost-tripwire
-      - name: Read costs without changing the issue
+      - name: Read costs without opening or changing an issue
         if: github.event_name == 'workflow_dispatch' && inputs.dry-run == true
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_TEAM_ID: ${{ vars.VERCEL_TEAM_ID }}
           NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
           NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: npm run cost-tripwire -- --dry-run

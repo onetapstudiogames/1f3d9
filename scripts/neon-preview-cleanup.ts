@@ -4,7 +4,7 @@ import { resolve } from 'node:path'
 import { safeErrorDetail } from './safe-error-detail.ts'
 
 type NeonBranch = Readonly<{ id: string; name: string; primary: boolean }>
-const SHARED_BRANCH = 'preview/shared-vercel-testing'
+export const SHARED_BRANCH = 'preview/shared-vercel-testing'
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)

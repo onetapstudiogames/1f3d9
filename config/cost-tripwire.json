@@ -1,39 +1,54 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
+  "cycleBudgetUsd": 120,
   "vercel": {
-    "maxDailySpendUsd": 5,
+    "cycleStartDay": 12,
+    "maxDailySpendUsd": 3,
     "projects": {
       "1f3d9": {
-        "edgeRequestsPerDay": 60000,
-        "functionInvocationsPerDay": 60000
+        "edgeRequestsPerDay": 180000,
+        "functionInvocationsPerDay": 180000
+      },
+      "1f3d9-live": {
+        "unmonitored": true,
+        "reason": "No reviewed request baseline is recorded for this project; its cost still counts in the cycle budget and the one-day limit."
       },
       "1f3ea": {
         "unmonitored": true,
-        "reason": "No reviewed seven-day normal week is recorded for this project."
+        "reason": "No reviewed request baseline is recorded for this project; its cost still counts in the cycle budget and the one-day limit."
       },
       "eo-web": {
         "unmonitored": true,
-        "reason": "No reviewed seven-day normal week is recorded for this project."
+        "reason": "No reviewed request baseline is recorded for this project; its cost still counts in the cycle budget and the one-day limit."
       },
       "snapshot": {
         "unmonitored": true,
-        "reason": "No reviewed seven-day normal week is recorded for this project."
+        "reason": "No reviewed request baseline is recorded for this project; its cost still counts in the cycle budget and the one-day limit."
       },
       "soti": {
         "unmonitored": true,
-        "reason": "No reviewed seven-day normal week is recorded for this project."
+        "reason": "No reviewed request baseline is recorded for this project; its cost still counts in the cycle budget and the one-day limit."
       },
       "soti-w3-debug-35d07e2fc1a1": {
         "unmonitored": true,
-        "reason": "No reviewed seven-day normal week is recorded for this project."
+        "reason": "No reviewed request baseline is recorded for this project; its cost still counts in the cycle budget and the one-day limit."
       },
       "sweetpspeech": {
         "unmonitored": true,
-        "reason": "No reviewed seven-day normal week is recorded for this project."
+        "reason": "No reviewed request baseline is recorded for this project; its cost still counts in the cycle budget and the one-day limit."
       }
     }
   },
   "neon": {
-    "maxPreviewBranches": 8
+    "maxPreviewBranches": 8,
+    "maxManualSnapshotsWithoutExpiry": 15
+  },
+  "why": {
+    "cycleBudgetUsd": "One budget for Vercel plus Neon in one billing cycle. The owner has not picked a number yet; 120 is the default. The cycle from 2026-10-12 was on course for about 41 dollars of Vercel and 54 dollars of Neon, about 95 in all, so 120 leaves about 25 dollars of room before it goes red.",
+    "vercel.cycleStartDay": "Vercel bills from the 12th to the 11th: the Pro seat changes price on the charge day of the 12th (read 2026-11-12).",
+    "vercel.maxDailySpendUsd": "Vercel effective cost for the whole team in one charge day. The 30 charge days from 2026-10-12 to 2026-11-10 ran from 0.99 to 1.81 dollars, median 1.30. Three dollars is about 1.7 times the highest normal day; the flood days of 2026-08-30 to 2026-09-01 cost 7.84 to 10.69.",
+    "vercel.projects.1f3d9": "Normal day for 1f3d9 CDN requests (Vercel renamed Edge Requests) and function invocations: the median of the 30 charge days from 2026-10-12 to 2026-11-10 was about 180,000 of each, highest 239,680, lowest 81,377. The alarm goes red above 3 times this, 540,000, which no normal day reached and the 2.1 to 2.5 million a day flood of 2026-08-30 would.",
+    "neon.maxPreviewBranches": "Eight leaves two places inside Neon's first ten branches for main and the protected preview/shared-vercel-testing.",
+    "neon.maxManualSnapshotsWithoutExpiry": "Manual snapshots on the city project with no end date. Every production migration takes one and each is billed at about its full size every month. A cap of 10 plus one kept by name is arriving separately; 15 leaves room above it. Alert only, nothing is deleted."
   }
 }

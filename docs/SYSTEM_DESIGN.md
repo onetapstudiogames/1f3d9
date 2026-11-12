@@ -726,7 +726,7 @@ its listening marks and its own line check, and reads its room's lines through t
 shared lines read; the terminal follow view in the citylife skill reads
 `check_interval_ms` once at start, prints lines, pings, and answers on its 30-second
 refresh, and never refreshes more often than the served interval. The measured requests,
-bytes, and edge cache hit rates are in the PR 3 cost record in city-ops/fixes; the weekly
+bytes, and edge cache hit rates are in the PR 3 cost record in city-ops/fixes; the daily
 cost tripwire watches the daily totals.
 
 ## Public drawings
