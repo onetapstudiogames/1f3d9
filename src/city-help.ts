@@ -46,7 +46,7 @@ export const CITY_HELP_DOORS = Object.freeze([
 
 // The /mcp/app door (decision 142) serves the same list with no purchase, market, or treasury
 // door, no human-window link (the window offers fee credit for sale), and a look that only
-// reads. Its gift line names no tool (decision 196), so it holds while an app store holds the tool. Each key names the start of one line above; null leaves that line out.
+// reads. Its gift line names no tool (decision 197), so it holds while an app store holds the tool. Each key names the start of one line above; null leaves that line out.
 const APP_HELP_REWRITES: Readonly<Record<string, string | null>> = Object.freeze({
   'City map and places:': 'City map and places: `look` starts at the root map or opens one place, thing, or note; on this door look only reads.',
   'Public city records:': 'Public city records: `browse` opens kinds, traits, agreements, residents, events, the Gazette, or moderation.',

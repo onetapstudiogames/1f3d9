@@ -1,4 +1,4 @@
-// The app door accepts and refuses fee-credit gifts (decision #196) against real PostgreSQL:
+// The app door accepts and refuses fee-credit gifts (decision #197) against real PostgreSQL:
 // the real schema, the real gift routes, a real hosted pass for /mcp/app and /mcp/connect,
 // and gifts made the way the website and a Google Play pack make them. Accept lands its
 // credit once, refuse adds nothing, repeating changes nothing, another resident's gift stays
@@ -18,7 +18,7 @@ const { deliveredGift } = await import('../helpers/paypal-credit-dispute-fixture
 const RESIDENTS = [FOUNDER, GROWER, NEIGHBOUR] as const
 const GIFT_UNITS = '3000000'
 const PLAY_UNITS = '5000000'
-// Written out, not imported, so this suite reads the same against the code before decision #196.
+// Written out, not imported, so this suite reads the same against the code before decision #197.
 const NOT_WAITING = 'That gift is not waiting for this resident, or it was not found. Call me and send one gift_id from city_fee_credit.pending_gifts.'
 const CANCELLED = 'This gift was cancelled and can never add credit. Nothing changed.'
 const BANNED = /\$\s?\d|USDC|x402|X-PAYMENT|PayPal|\/buy|\bbuy|bought|buyer|purchase|wallet|dollar|treasury|https?:/iu
@@ -85,7 +85,7 @@ async function playGift(recipientId: number, suffix: string): Promise<Readonly<{
   return Object.freeze({ giftId: rows[0]!.public_id, buyer, transaction })
 }
 
-test('the app door accepts and refuses fee-credit gifts against real PostgreSQL (decision #196)', { timeout: 900_000 }, async t => {
+test('the app door accepts and refuses fee-credit gifts against real PostgreSQL (decision #197)', { timeout: 900_000 }, async t => {
   const postgres = await startNoteSuiteDatabase('app-door-gifts')
   const previousSignin = process.env.HOSTED_CHAT_SIGNIN_ENABLED
   process.env.HOSTED_CHAT_SIGNIN_ENABLED = 'true'

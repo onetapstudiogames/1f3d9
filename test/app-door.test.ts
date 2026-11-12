@@ -140,7 +140,7 @@ for (const name of ['invent_kind', 'revise_kind']) {
   })
 }
 
-test('the app door lists exactly the 37 tools the owner kept (decision #196)', async () => {
+test('the app door lists exactly the 37 tools the owner kept (decision #197)', async () => {
   const tools = await toolsOn('app')
   assert.deepEqual(tools.map(tool => tool.name), APP_TOOLS)
   assert.equal(tools.length, 37)
@@ -315,7 +315,7 @@ test('no description, schema, or server instruction on the app door names money 
   assert.match(instructions, /going home cannot be blocked/u)
   assert.match(instructions, /each use one fee credit; call credit_preflight first\./u)
   assert.match(instructions, /Show the credit it uses and the balance before and after, then send/u)
-  // Decision #196: the instructions say gifts wait, and name no gift tool, so they hold while an app store holds the tool.
+  // Decision #197: the instructions say gifts wait, and name no gift tool, so they hold while an app store holds the tool.
   assert.ok(instructions.includes('me lists fee-credit gifts that wait for an accept or refuse.'))
   assert.doesNotMatch(instructions, /credit_gift/u)
 })
@@ -546,7 +546,7 @@ test('the app me answer keeps fee credit held, used, and received, and nothing a
   assert.deepEqual(answer.pages.pending_gifts, { has_more: false })
 })
 
-test('the app me answer shows waiting gifts by id, amount, status and time only (decision #196)', () => {
+test('the app me answer shows waiting gifts by id, amount, status and time only (decision #197)', () => {
   const answer = appMeAnswer(FULL_ME) as Record<string, any>
   assert.deepEqual(answer.city_fee_credit.pending_gifts, [
     { gift_id: 'city_gift_00000000000000000000000000000001', status: 'pending', amount: '1.000000', amount_units: '1000000', created_at: '2026-11-12T00:00:00.000Z' },
@@ -728,11 +728,11 @@ test('the app me answer keeps the around-you scope line without its web pointer'
   assert.doesNotMatch(JSON.stringify(answer), /https?:|money/u)
 })
 
-// Decision #196: the one gift tool the app door gained, in its own words.
+// Decision #197: the one gift tool the app door gained, in its own words.
 const APP_CREDIT_GIFT_DESCRIPTION =
   'Accept or refuse one fee-credit gift waiting for this resident. Accept adds its exact credit; refuse adds nothing. Repeating either alters nothing. A gift on hold (status frozen) can only be refused.'
 
-test('the app door credit_gift accepts or refuses only, in its own words, with the same hints as the chat door (decision #196)', async () => {
+test('the app door credit_gift accepts or refuses only, in its own words, with the same hints as the chat door (decision #197)', async () => {
   const appTool = (await toolsOn('app')).find(tool => tool.name === 'credit_gift')!
   const connectTool = (await toolsOn('connect')).find(tool => tool.name === 'credit_gift')!
   assert.equal(appTool.title, 'Accept or refuse a fee-credit gift')
@@ -758,7 +758,7 @@ test('the app door credit_gift accepts or refuses only, in its own words, with t
 // The owner's words for what chat apps read (2026-11-12): none of these in a new or changed sentence.
 const AVOIDED_WORDS = /\b(?:spend\w*|spent|money|pay|paid|pays|paying|payments?|wallets?|buy\w*|bought|purchas\w*|costs?|costing|prices?|priced|charg\w*|cash|dollars?|fund\w*)\b/iu
 
-test('the app door sentences the owner asked about say use, and the chat door keeps its words (decision #196)', async () => {
+test('the app door sentences the owner asked about say use, and the chat door keeps its words (decision #197)', async () => {
   const served = JSON.stringify(await toolsOn('app')) + (await instructionsOn('app'))
   for (const old of [
     'spends exactly one fee credit', 'Paid acts are separate', 'Each costs one fee credit', 'Refusals spend nothing',
@@ -796,7 +796,7 @@ test('the app door sentences the owner asked about say use, and the chat door ke
   assert.match(await instructionsOn('connect'), /Frontier founding, kind invention, and kind revision cost exactly \$1 by USDC or one fee credit/u)
 })
 
-test('the app door fee-credit refusals say use and where credit comes from in one fact (decision #196)', () => {
+test('the app door fee-credit refusals say use and where credit comes from in one fact (decision #197)', () => {
   assert.equal(APP_PAYMENT_REQUIRED_REFUSAL,
     'This action uses one fee credit. Call credit_preflight, then send a new city_credit_request_id. Nothing was used.')
   assert.equal(APP_INSUFFICIENT_CREDIT_REFUSAL,
@@ -807,7 +807,7 @@ test('the app door fee-credit refusals say use and where credit comes from in on
   }
 })
 
-test('the app door answers a gift refusal in its own words, with no web address or money words (decision #196)', async () => {
+test('the app door answers a gift refusal in its own words, with no web address or money words (decision #197)', async () => {
   const { giftBlockedRefusal, GIFT_NOT_PENDING_REFUSAL, GIFT_ID_REJECTED_REFUSAL } = await import('../src/prepaid-credit.ts')
   const cases: ReadonlyArray<readonly [400 | 409, string, string]> = [
     [409, giftBlockedRefusal('frozen', 'accepted'), APP_GIFT_ON_HOLD_REFUSAL],

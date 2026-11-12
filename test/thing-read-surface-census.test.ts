@@ -451,6 +451,10 @@ const READ_SITES: Readonly<Record<string, ReadDecision>> = Object.freeze({
   'src/engine.ts missingActionIds SELECT#1': 'check: act tells a missing thing id from a refused one',
   'src/engine.ts lockActionThings SELECT#1': 'check: the engine locks things before an action',
   'src/engine.ts moveResidentWithCarry SELECT#1': 'check: the engine moves a carried thing with its carrier',
+  'src/events-totals-check.ts COVERAGE_SQL SELECT#1':
+    'exempt: the kept events tally (#196) finds which things sit in a feed room to sum its own rows; events are history, no thing row',
+  'src/events-totals-tally.ts EVENTS_TALLY_TOTALS_SQL SELECT#1':
+    'exempt: the kept events tally (#196) maps a counted event to the feed room its thing sits in, as eventRoomSql; events are history, no thing row',
   'src/feed-rooms.ts eventRoomSql SELECT#1': 'exempt: maps an event to its room; events are history',
   'src/index.ts GET /api/me SELECT#1': 'count: me place thing_count, beside the live remnant_count',
   'src/index.ts GET /api/me SELECT#2': 'short: me owned things with ends',

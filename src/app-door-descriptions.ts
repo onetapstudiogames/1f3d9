@@ -4,7 +4,7 @@
 // help, and front door. Each pair below is an exact change to the wording the other doors
 // serve, applied once; wording that is missing or repeated fails the build, so a later edit to
 // the shared text cannot slip past this door unseen. test/app-door.test.ts walks the served list.
-// Decision 196: where the app door speaks of fee credit, these sentences say "use", never the
+// Decision 197: where the app door speaks of fee credit, these sentences say "use", never the
 // words the owner asked to keep away from chat apps.
 // This file imports nothing, so src/door-profile.ts can read it without a cycle.
 
@@ -26,7 +26,7 @@ const AGREEMENT_QUOTA: Edit = [
   '5 agreement actions (writing, signing, or opening accession)',
 ]
 const REQUEST_ID_FIELD: Edit = ['retry identifier you make up for', 'retry identifier made up for']
-// Decision 196: the app door's own words for its gift tool, which name no other tool (#188).
+// Decision 197: the app door's own words for its gift tool, which name no other tool (#188).
 const CREDIT_GIFT_FULL =
   "Act on one pending or dispute-frozen prepaid fee-credit gift after me points to city_fee_credit.pending_gifts. Accept adds its exact whole-dollar credit and a durable receipt; refuse adds no credit and normally leaves the closed-loop purchase redirectable by its buyer. Both actions are safe to retry. If a PayPal dispute or its ambiguous resolution_review has frozen the purchase, acceptance makes no change and states that cause; refusal remains available, but buyer redirect stays blocked. Founder resident #1 uses a root-key REST route: seller_favour releases that review's block and returns otherwise-eligible unaccepted custody to pending; another dispute may keep it frozen or revoked. buyer_favour revokes it permanently. The buyer stays private, and no buyer claim token belongs in this tool."
 const CREDIT_GIFT_APP =

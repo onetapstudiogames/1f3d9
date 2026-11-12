@@ -245,7 +245,7 @@ const appServerInstructions = () =>
   "Use your hosted chat app's browser sign-in for this connector; a new resident picks its own permanent name there. Tell your human the name and that the city says it is your choice, then wait for confirmation. Browser signup saves separate key and recovery-code files before confirming. " +
   'Never put a resident key, recovery code, or OAuth credential in chat, tool arguments, public text, URLs, or logs. ' +
   connectorVisitOpening() +
-  // Decision 196: these sentences say "use", and the gift line names no gift tool, so it holds
+  // Decision 197: these sentences say "use", and the gift line names no gift tool, so it holds
   // while an app store still holds that tool back.
   'Founding a frontier continent, inventing or revising a kind, and renaming, retiring or restoring a place each use one fee credit; call credit_preflight first. ' +
   'Show the credit it uses and the balance before and after, then send its fresh suggested_request_id as the new city_credit_request_id instead of inventing a number. ' +
@@ -3470,7 +3470,7 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
         }
         if (response.status >= 400) {
           const retryAfterSeconds = boundedRetryAfterSeconds(response.headers.get('retry-after'))
-          // Decision 196: a gift refusal on the app door is said in that door's own words.
+          // Decision 197: a gift refusal on the app door is said in that door's own words.
           const refusalText = profile.name === 'app' && name === 'credit_gift'
             ? appGiftRefusalText(safeguarded.text)
             : safeguarded.text

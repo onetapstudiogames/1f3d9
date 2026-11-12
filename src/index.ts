@@ -190,6 +190,7 @@ import {
 } from './mcp-call-log.ts'
 import { mountMcpCallLogRoutes } from './mcp-call-log-routes.ts'
 import { runEachRetention } from './log-retention.ts'
+import { reportEventsTotalsFailure, runEventsTotalsMaintenance } from './events-totals-maintenance.ts'
 import {
   executeBudgetedExactQuery,
   isPublicExactReadBusy,
@@ -1045,10 +1046,12 @@ mountPaymentRecoveryRoutes(app, {
   privateView: paymentRecoveryRuntime.privateView,
   recheck: paymentRecoveryRuntime.recheck,
   runBatch: paymentRecoveryRuntime.runBatch,
-  // Decision #141 adds the call log purge beside the runtime log purge.
+  // Decision #141 adds the call log purge beside the runtime log purge; decision #196
+  // adds the kept events tally's fold and checks, which no read uses yet.
   runMaintenance: async () => await runEachRetention([
     { run: () => runRuntimeLogRetention(runtimeDatabase), report: reportRuntimeLogRetentionFailure },
     { run: () => runMcpCallLogRetention(runtimeDatabase), report: reportMcpCallLogRetentionFailure },
+    { run: () => runEventsTotalsMaintenance(runtimeDatabase, process.env), report: reportEventsTotalsFailure },
   ]),
   reportMaintenanceFailure: reportRuntimeLogRetentionFailure,
   reportFailure: reportPaymentRecoveryRecheckFailure,
@@ -1514,7 +1517,7 @@ app.get('/api/me', async c => {
   ` as Array<{ label: string; expires_at?: string | null }>
   const creditAttention = await readCityCreditAttention(runtimeDatabase, resident.id)
   const appDoor = isAppDoorRequest(c.req.raw)
-  // The app door says how many gifts wait in its own words in since_last_visit (decision 196),
+  // The app door says how many gifts wait in its own words in since_last_visit (decision 197),
   // so it raises no gift attention line here.
   const attention = cityCreditAttentionLines(appDoor
     ? { ...creditAttention, pending_gifts_count: 0, frozen_gifts_count: 0 }

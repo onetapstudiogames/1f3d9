@@ -1,7 +1,7 @@
 // One home for what each MCP door shows (decision 142). /mcp is the key-capable door,
 // /mcp/connect the hosted-chat door, and /mcp/app the hosted door made for app stores:
 // the same sign-in and residents as /mcp/connect, with no purchase, payment recheck, or
-// world-sale tools and no money rails in any answer. Since decision 196 it accepts and refuses
+// world-sale tools and no money rails in any answer. Since decision 197 it accepts and refuses
 // a waiting fee-credit gift, and still cannot give one or add fee credit. Since decision 147 no door
 // carries app-block advice; the one sentence lives in the reference only.
 // This file imports only the leaf module of app door wording, so core.ts and city-facts.ts
@@ -60,7 +60,7 @@ export const APP_DOOR_PATH = '/mcp/app'
 export const CONNECT_LABEL_TEST_END = '2026-11-03T23:59:59Z'
 
 // The tools the owner left off the app door on 2026-10-09, less credit_gift, which came back
-// on 2026-11-12 (decision 196). Founder-only moderate is dropped from both hosted doors as before.
+// on 2026-11-12 (decision 197). Founder-only moderate is dropped from both hosted doors as before.
 export const APP_DROPPED_TOOLS = Object.freeze([
   'buy_credit',
   'payment_attempt',
@@ -106,14 +106,14 @@ export const APP_HIDDEN_EVENT_KINDS = Object.freeze([
 export const APP_BANNED_TEXT =
   /\$\s?\d|USDC|x402|X-PAYMENT|PayPal|\/buy|\bbuy|purchase|wallet|dollar|treasury|sale\b|safety|(?<!cannot be |never )blocked|its filter/iu
 
-// Decision 196: the app door's fee-credit refusals say "use", and the one with no credit says
+// Decision 197: the app door's fee-credit refusals say "use", and the one with no credit says
 // where credit comes from in one fact with no address.
 export const APP_PAYMENT_REQUIRED_REFUSAL =
   'This action uses one fee credit. Call credit_preflight, then send a new city_credit_request_id. Nothing was used.'
 export const APP_INSUFFICIENT_CREDIT_REFUSAL =
   'This action uses one fee credit and this resident has none. Fee credit is added outside this app. Nothing was used.'
 
-// Decision 196: what the app door says when a gift cannot be accepted or refused. The other
+// Decision 197: what the app door says when a gift cannot be accepted or refused. The other
 // doors keep the backing words, which name the payment rail and a web address.
 export const APP_GIFT_NOT_WAITING_REFUSAL =
   'That gift is not waiting for this resident, or it was not found. Call me and send one gift_id from city_fee_credit.pending_gifts.'

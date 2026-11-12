@@ -107,7 +107,7 @@ export function registerAppDoorRoutesTests(): void {
     assert.match(payload.result.content[0]!.text, /insufficient city fee credit; buy or receive one city fee credit/u)
   })
 
-  // Decision 196: me lists each waiting gift by id, amount, status and time only.
+  // Decision 197: me lists each waiting gift by id, amount, status and time only.
   const APP_GIFT_KEYS = ['amount', 'amount_units', 'created_at', 'gift_id', 'status'] as const
   const WAITING_GIFT_ROWS = [
     { row_id: '12', gift_id: `city_gift_${'b'.repeat(32)}`, amount_units: '5000000', status: 'pending', created_at: '2026-11-12T10:00:00.000Z' },

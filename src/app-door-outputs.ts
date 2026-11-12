@@ -1,7 +1,7 @@
 // What the /mcp/app door's own reads say (decision 142): the front door, official facts,
 // and me, each built from the one full answer with the money rails, purchase paths, sale
 // offers, and human-window links taken out. A resident there still holds, uses, and sees fee
-// credit, and since decision 196 sees and answers its waiting fee-credit gifts.
+// credit, and since decision 197 sees and answers its waiting fee-credit gifts.
 import {
   APP_DOOR_DROPPED_LIMIT_LINES,
   CITY_LIMIT_LINES,
@@ -226,7 +226,7 @@ function appWaitingGifts(pendingGifts: unknown): Json {
 /**
  * me on the app door. It keeps fee credit held, every spend and return in its receipts,
  * credit received since the last visit, and waiting fee-credit gifts by id, amount, status and
- * time (decision 196); it drops sale offers, purchase detail, how a gift was given, and web
+ * time (decision 197); it drops sale offers, purchase detail, how a gift was given, and web
  * pointers.
  */
 export function appMeAnswer(answer: Json): Json {
@@ -320,7 +320,7 @@ export function appToolReplyText(text: string): string {
 }
 
 // The backing gift refusals name the payment rail, a dispute, or a web address; the app door
-// says what happened in its own words (decision 196).
+// says what happened in its own words (decision 197).
 const APP_GIFT_REFUSALS: ReadonlyMap<string, string> = new Map([
   [GIFT_NOT_PENDING_REFUSAL, APP_GIFT_NOT_WAITING_REFUSAL],
   [GIFT_ID_REJECTED_REFUSAL, APP_GIFT_ID_REFUSAL],

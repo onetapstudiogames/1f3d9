@@ -345,4 +345,11 @@ export function registerReleaseOrderTests(): void {
     assert.match(deploymentRunbook, /npm run migrate:production:waiting-transfers/u)
     assert.match(deploymentRunbook, /resident_mutes_let_gifts_through_on_resident_mute[\s\S]*Never chain the migration with the merge\./u)
   })
+
+  test('release preparation applies the events totals tally migration to Preview and Production before the merge', () => {
+    assert.match(deploymentRunbook, /### Events totals tally prerequisite/u)
+    assert.match(deploymentRunbook, /npm run migrate:preview:events-totals-tally/u)
+    assert.match(deploymentRunbook, /npm run migrate:production:events-totals-tally/u)
+    assert.match(deploymentRunbook, /events_totals_state[\s\S]*Never chain the migration with the merge\./u)
+  })
 }

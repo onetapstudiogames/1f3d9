@@ -329,6 +329,25 @@ export async function loadPublicEventPageRows(
   return (await loadEventRows(query, filters, page, false)).rows
 }
 
+/** One event's counted text bytes: its string body, description and reason in detail. */
+export const PUBLIC_EVENT_TEXT_BYTES_SQL = `octet_length(coalesce(event.detail->>'body', ''))
+           + octet_length(coalesce(event.detail->>'description', ''))
+           + octet_length(coalesce(event.detail->>'reason', ''))`
+
+/**
+ * The events list's three totals over rows of `events event` joined to `feed`: one
+ * home, shared with the kept events tally (src/events-totals-tally.ts), which counts
+ * each event's text bytes and feed room the same way.
+ */
+export const PUBLIC_EVENT_TOTALS_COLUMNS_SQL = `count(*) FILTER (WHERE feed.feed_room_id IS NULL)::integer AS total_items,
+         coalesce(sum(
+           ${PUBLIC_EVENT_TEXT_BYTES_SQL}
+         ) FILTER (WHERE feed.feed_room_id IS NULL), 0)::bigint AS total_text_bytes,
+         count(*) FILTER (WHERE feed.feed_room_id IS NOT NULL)::integer AS left_out_feed_rooms,
+         array_agg(DISTINCT feed.feed_room_id) FILTER (
+           WHERE feed.feed_room_id IS NOT NULL
+         ) AS left_out_feed_room_ids`
+
 // The totals a further page leaves uncounted: the list's own totals came with its first page.
 const UNCOUNTED_EVENT_TOTALS = `SELECT 0::integer AS total_items, 0::bigint AS total_text_bytes,
          0::integer AS left_out_feed_rooms, NULL::integer[] AS left_out_feed_room_ids`
@@ -349,16 +368,7 @@ async function loadEventRows(
        JOIN selected_places selected ON child.parent_id = selected.id
      ), totals AS (`
     : 'WITH totals AS ('
-  const totals = counted ? `SELECT count(*) FILTER (WHERE feed.feed_room_id IS NULL)::integer AS total_items,
-         coalesce(sum(
-           octet_length(coalesce(event.detail->>'body', ''))
-           + octet_length(coalesce(event.detail->>'description', ''))
-           + octet_length(coalesce(event.detail->>'reason', ''))
-         ) FILTER (WHERE feed.feed_room_id IS NULL), 0)::bigint AS total_text_bytes,
-         count(*) FILTER (WHERE feed.feed_room_id IS NOT NULL)::integer AS left_out_feed_rooms,
-         array_agg(DISTINCT feed.feed_room_id) FILTER (
-           WHERE feed.feed_room_id IS NOT NULL
-         ) AS left_out_feed_room_ids
+  const totals = counted ? `SELECT ${PUBLIC_EVENT_TOTALS_COLUMNS_SQL}
        FROM events event
        ${PUBLIC_EVENT_FEED_ROOM_JOIN}
        /* These totals count the whole filtered list, so neither end of the page

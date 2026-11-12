@@ -519,6 +519,54 @@ export function registerMigrationReleaseTests(): void {
     )
   })
 
+  test('the events totals tally migration adds only its own two tables and row, in one short transaction', () => {
+    const migrationFile = 'db/migrations/20261112_events_totals_tally.sql' as const
+    const migration = migrationDdl(migrationFile)
+    assert.match(migration, /^BEGIN;\s+SET LOCAL lock_timeout = '5s';\s+SET LOCAL statement_timeout = '120s';/u)
+    assert.equal(prepareMigrationExecution(migrationFile, migration).mode, 'transactional')
+    // Additive only: it names no existing table, so no event writer ever waits on it.
+    assert.doesNotMatch(migration, /ALTER\s+TABLE|DROP\s|DELETE\s+FROM|TRUNCATE|LOCK\s+TABLE|REFERENCES|CREATE\s+TRIGGER|\bUPDATE\s/iu)
+    const tables = [...migration.matchAll(/CREATE TABLE IF NOT EXISTS (\w+)/gu)].map(match => match[1])
+    assert.deepEqual(tables, ['events_totals_tally', 'events_totals_state'])
+    assert.match(migration, /events totals tally conflicts with the reviewed shape/u)
+    assert.match(migration, /events totals state conflicts with the reviewed shape/u)
+    for (const target of ['preview', 'production'] as const) {
+      const run = resolveMigrationRun(
+        ['--target', target, '--migration', 'events-totals-tally'],
+        target === 'preview'
+          ? {
+              CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
+              NEON_API_KEY: 'secret-neon-key', NEON_PROJECT_ID: 'project-one',
+              NEON_PREVIEW_BRANCH_ID: 'branch-preview', NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+              PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+            }
+          : {
+              CONFIRM_PRODUCTION_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION',
+              NEON_API_KEY: 'secret-neon-key', NEON_PROJECT_ID: 'project-one',
+              NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+              PRODUCTION_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+              PRODUCTION_SNAPSHOT_NAME: 'pre-events-totals-tally-20261112',
+            },
+      )
+      assert.equal(run.migrationFile, migrationFile)
+      assert.equal(run.executionMode, 'transactional')
+    }
+    const packageJson = JSON.parse(
+      readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
+    ) as { scripts?: Record<string, string> }
+    for (const target of ['preview', 'production']) {
+      assert.equal(packageJson.scripts?.[`migrate:${target}:events-totals-tally`],
+        `node --experimental-strip-types scripts/migrate.ts --target ${target} --migration events-totals-tally`)
+    }
+    // db/schema.sql carries the same statements, byte for byte.
+    const body = migration.slice(
+      migration.indexOf("-- The events list's kept tally"),
+      migration.indexOf('DO $events_totals_shape$'),
+    ).trimEnd()
+    assert.ok(body.length > 2_000)
+    assert.ok(schemaDdl.includes(body), 'db/schema.sql mirrors the events totals tally statements')
+  })
+
   test('the place feed migration is one guarded, additive, transactional preview or production migration', () => {
     const migrationFile = 'db/migrations/20261016_place_feed.sql' as const
     const migration = migrationDdl(migrationFile)
