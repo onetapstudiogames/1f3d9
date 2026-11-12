@@ -26,7 +26,7 @@ files from this folder.
 
 ## Repository cost automation
 
-The public repository's weekly `Cost tripwire` workflow reads provider metadata but
+The public repository's daily `Cost tripwire` workflow reads provider metadata but
 never receives application or database credentials. Configure these values under
 **GitHub repository Settings → Secrets and variables → Actions**:
 
@@ -37,45 +37,63 @@ lists and re-proves the exact Neon branch but makes no delete call.
 
 | Kind | Name | Purpose |
 |---|---|---|
-| Secret | `VERCEL_TOKEN` | Vercel access token allowed to read the team's FOCUS billing charges. |
-| Secret | `NEON_API_KEY` | Project-scoped Neon API key allowed to list branches and delete the exact branch selected by the PR-close guard. |
-| Variable | `VERCEL_TEAM_ID` | Non-secret Vercel team ID supplied to the billing endpoint. |
-| Variable | `NEON_PROJECT_ID` | Non-secret city Neon project ID supplied to branch list/delete endpoints. |
+| Secret | `VERCEL_TOKEN` | Vercel access token allowed to read the team's FOCUS billing charges and its integration configurations (the Neon spending block). |
+| Secret | `NEON_API_KEY` | Project-scoped Neon API key allowed to list branches and snapshots, and to delete the exact branch selected by the PR-close guard. |
+| Variable | `VERCEL_TEAM_ID` | Non-secret Vercel team ID supplied to the billing and integration endpoints. |
+| Variable | `NEON_PROJECT_ID` | Non-secret city Neon project ID supplied to the branch and snapshot endpoints. |
 
-GitHub supplies the issue-writing token itself. Provider secrets exist only in the
-step that needs them and must never be copied into workflow arguments, logs, issue
-text, or job summaries. A missing secret or variable skips that provider check and
-opens or updates the issue with `SKIPPED`; an API or response-shape failure is
-`FAILED`. Neither state is reported as zero usage.
+GitHub supplies its own token, which the tripwire uses to list open pull requests and to
+open or comment on its dated issue. Provider secrets exist only in the step that needs
+them and must never be copied into workflow arguments, logs, issue text, or job
+summaries. A missing secret or variable skips that provider read with `SKIPPED`; an API,
+size, timeout, or response-shape failure is `FAILED`. Either one turns the run red, and
+neither is ever reported as zero.
 
 [`config/cost-tripwire.json`](../../config/cost-tripwire.json) is the reviewed source
-for thresholds. Its initial values are 60,000 daily Edge Requests and 60,000 daily
-Function Invocations for `1f3d9`, $5 maximum effective team cost in one UTC day, and
-eight `preview/*` Neon branches. Eight leaves two places inside Neon's first ten for
-`main` and the protected `preview/shared-vercel-testing`. Usage alerts only when it is
-greater than three times a daily project baseline; exact equality is not an alert.
-Every project name returned by Vercel must have a config entry. A project may instead
-be explicitly `unmonitored: true` with a nonempty reason when no reviewed seven-day
-normal week records its Edge Requests and Function Invocations. That entry satisfies
-project completeness without inventing thresholds; the team daily-spend cap still
-includes its cost. The feed currently names `1f3d9`, `1f3ea`, `eo-web`, `snapshot`,
-`soti`, `soti-w3-debug-35d07e2fc1a1`, and `sweetpspeech`. Only `1f3d9` has the recorded normal-week
-request and invocation baseline above. An unknown project makes the report incomplete
-and keeps the issue loud until its reviewed monitored or unmonitored entry is added.
+for limits, and its `why` entries say how each number was chosen:
 
-The workflow reads the previous seven complete UTC days every Monday and can be run
-manually. Manual runs default to dry-run: provider reads happen, the full proposed
-issue text is printed, and GitHub is not changed. A normal alert reuses the one open
-issue titled `Cost tripwire` and appends a dated, run-marked comment; a healthy run
-adds no issue noise. When the issue appears:
+- `cycleBudgetUsd`, 120: one budget for Vercel plus Neon, each projected to the end of
+  its billing period. This is the one number to change when the owner picks a budget.
+- `vercel.cycleStartDay`, 12: Vercel's cycle runs from the 12th to the 11th.
+- `vercel.maxDailySpendUsd`, 3: Vercel effective cost for the whole team in one charge day.
+- `vercel.projects.1f3d9`, 180,000 CDN requests and 180,000 function invocations a
+  normal day. A day alerts only when it is greater than three times that (540,000);
+  exact equality is not an alert.
+- `neon.maxPreviewBranches`, 8: leaves two places inside Neon's first ten for `main` and
+  the protected `preview/shared-vercel-testing`.
+- `neon.maxManualSnapshotsWithoutExpiry`, 15: manual snapshots on the city project with
+  no end date.
+
+The one-day limits look at the last two settled charge days, so one skipped run cannot
+hide a day. This holds across the start of a cycle: on the first day of a new cycle the
+earlier of the two is the old cycle's last day (the 11th), which is read and checked
+against the one-day limits but kept out of the new cycle's total. Every project name returned by Vercel must have a config entry. A project
+may instead be explicitly `unmonitored: true` with a nonempty reason when no reviewed
+normal week records its requests. That entry satisfies project completeness without
+inventing limits; its cost still counts in the budget and the one-day limit. The feed
+currently names `1f3d9`, `1f3d9-live`, `1f3ea`, `eo-web`, `snapshot`, `soti`, and
+`sweetpspeech`; `soti-w3-debug-35d07e2fc1a1` is kept from earlier feeds. Only `1f3d9`
+has a request baseline. An unknown project turns the run red until its reviewed
+monitored or unmonitored entry is added.
+
+The workflow runs every day at 14:23 UTC and can be run manually. Each run reads the
+current Vercel cycle one charge day per request, the Neon month to date with its line
+items, the city project's snapshots and branches, and the open pull requests. Any
+`preview/*` branch other than `preview/shared-vercel-testing` whose name does not match an
+open pull request's branch turns the run red. The tripwire only reports: it never
+deletes a branch or a snapshot. Manual runs default to dry-run: provider reads happen,
+the full report is printed, the run is still red when something crossed, and GitHub is
+not changed. A red normal run opens a new issue titled `Cost tripwire YYYY-MM-DD` (UTC);
+a second red run on the same day adds a run-marked comment to that day's issue, and older
+open issues are never written to. A green run opens nothing. When the issue appears:
 
 1. Check `FAILED`, `SKIPPED`, and unconfigured-project lines before trusting totals.
-2. Find the first UTC day and project above its displayed limit; compare Vercel paths,
-   deployments, drains, and recent releases for that window.
+2. Find the first charge day and project above its displayed limit; compare Vercel
+   paths, deployments, drains, and recent releases for that window.
 3. If Neon is high, identify owners before deleting anything; `main` and
-   `preview/shared-vercel-testing` are protected.
-4. Contain the cost source, run the workflow in dry-run, then run it normally to append
-   the verified numbers to the existing issue.
+   `preview/shared-vercel-testing` are protected, and snapshots are backups.
+4. Contain the cost source, run the workflow in dry-run, and record the verified numbers
+   in the dated issue.
 
 Check that the Neon–Vercel integration's own cleanup is enabled as defense in depth.
 In the Neon-managed integration, select **Automatically delete obsolete Neon branches**;
@@ -87,7 +105,7 @@ lists all active branches, derives only `preview/<closed PR head>`, re-reads the
 matching branch ID, and deletes only when the name still matches. The
 `pull_request_target` workflow definition and checked-out script both come from the
 reviewed default branch, and a job-level repository identity check skips every fork
-before secrets are available. Provider cleanup and the weekly branch cap remain the
+before secrets are available. Provider cleanup and the daily tripwire's branch checks remain the
 fork backstop. Missing configuration, absent branches, and every action are written
 to the job summary.
 See Neon's [branch cleanup guide](https://neon.com/docs/guides/vercel-branch-cleanup)

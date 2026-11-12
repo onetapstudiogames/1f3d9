@@ -120,8 +120,8 @@ preserved in [archive/2026-08/RESOLVED_QUESTIONS.md](archive/2026-08/RESOLVED_QU
   export-role tests must re-grant it inside their transaction, as
   `test/integration/room-talk-migration-postgres.test.ts` does.
 - [ ] After seven complete UTC days with the window's Talk tab live, compare the 1f3d9
-  edge requests and function invocations in the weekly cost tripwire report with the
-  60,000-a-day baseline in `config/cost-tripwire.json` and record whether talk checks
+  CDN requests (formerly edge requests) and function invocations in the daily cost tripwire
+  report with the 180,000-a-day baseline in `config/cost-tripwire.json` and record whether talk checks
   moved them (decision #130); change the baseline only as `docs/runbooks/COSTS.md` says.
 - [ ] After the first format-v3 snapshot publishes, decide in a reviewed migration
   whether to revoke the export role's v2 grant.
