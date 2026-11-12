@@ -145,6 +145,19 @@ test('day limits look only at the last two settled charge days', () => {
   assert.equal(result.findings.some(finding => /2026-08-26/u.test(finding)), false)
 })
 
+test('a day from the old cycle counts for the one-day limit but not for the new cycle total', () => {
+  const cycle = vercelCycleThrough('2026-11-12', 12)
+  const summary = {
+    projectDays: [],
+    teamSpendByDay: [{ date: '2026-11-11', effectiveCostUsd: 9 }, { date: '2026-11-12', effectiveCostUsd: 1.3 }],
+  }
+
+  const result = compareCosts({ vercel: { cycle, summary } }, thresholds)
+
+  assert.equal(result.projection.vercelSoFarUsd, 1.3)
+  assert.match(result.findings.join(' '), /Vercel spent \$9\.00 on 2026-11-11, over the \$5\.00 limit for one day/u)
+})
+
 test('comparison accepts healthy values at the exact caps', () => {
   const result = compareCosts({
     vercel: {
@@ -303,6 +316,8 @@ test('the Vercel cycle runs from the 12th to the 11th and reads only settled day
   assert.deepEqual([full.firstDay, full.lastDay, full.length, full.daysToRead.length], ['2026-10-12', '2026-11-11', 31, 31])
   const first = vercelCycleThrough('2026-11-12', 12)
   assert.deepEqual([first.firstDay, first.lastDay, first.length, first.daysToRead], ['2026-11-12', '2026-12-11', 30, ['2026-11-12']])
+  assert.deepEqual(first.dayLimitDays, ['2026-11-11', '2026-11-12'], 'the one-day limits reach back into the old cycle')
+  assert.deepEqual(full.dayLimitDays, ['2026-11-10', '2026-11-11'])
   const wrap = vercelCycleThrough('2027-01-05', 12)
   assert.deepEqual([wrap.firstDay, wrap.lastDay, wrap.length, wrap.daysToRead.length], ['2026-12-12', '2027-01-11', 31, 25])
 })

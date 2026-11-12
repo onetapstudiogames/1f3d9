@@ -92,7 +92,9 @@ day of the 11th. The tripwire asks for one charge day per request (about 0.8 MB 
 November 2026, inside the 5 MB response cap), checks that each answer is the day asked
 for and already over, uses `ConsumedQuantity` for CDN Requests (formerly Edge Requests)
 and Function Invocations, and sums `EffectiveCost` for the cycle total and the one-day
-limit. Effective cost includes the $20 Pro seat and usage the plan's included credit
+limit. The one-day limits always cover the last two settled charge days, so on the first
+day of a cycle the run also reads the old cycle's last day (the 11th) for those limits
+only; it never counts toward the new cycle's total. Effective cost includes the $20 Pro seat and usage the plan's included credit
 covers, so it can run up to about $20 above the card charge (estimated; only the invoices give the card
 amount). The [Vercel billing API reference](https://vercel.com/docs/rest-api/billing/list-focus-billing-charges)
 is the provider contract; a schema or API mismatch is an incident signal, never zero.

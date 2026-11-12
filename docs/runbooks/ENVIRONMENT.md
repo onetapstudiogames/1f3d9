@@ -65,7 +65,9 @@ for limits, and its `why` entries say how each number was chosen:
   no end date.
 
 The one-day limits look at the last two settled charge days, so one skipped run cannot
-hide a day. Every project name returned by Vercel must have a config entry. A project
+hide a day. This holds across the start of a cycle: on the first day of a new cycle the
+earlier of the two is the old cycle's last day (the 11th), which is read and checked
+against the one-day limits but kept out of the new cycle's total. Every project name returned by Vercel must have a config entry. A project
 may instead be explicitly `unmonitored: true` with a nonempty reason when no reviewed
 normal week records its requests. That entry satisfies project completeness without
 inventing limits; its cost still counts in the budget and the one-day limit. The feed

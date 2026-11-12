@@ -19,6 +19,7 @@ type World = Readonly<{
   previewBranches?: readonly string[]
   openPullRequestHeads?: readonly string[]
   openIssues?: readonly Record<string, unknown>[]
+  dayCostsUsd?: Readonly<Record<string, number>>
 }>
 
 type Call = Readonly<{ method: string; url: URL; body?: string }>
@@ -87,7 +88,7 @@ function fakeProviders(world: World, calls: Call[]): typeof fetch {
       const label = new Date(Date.parse(url.searchParams.get('from') ?? '') - DAY_MS).toISOString().slice(0, 10)
       if (label === world.failingVercelDay) return new Response('busy', { status: 503 })
       if (label === world.hugeVercelDay) return new Response('x'.repeat(SIX_MEGABYTES), { status: 200 })
-      return new Response(chargeDay(label, NORMAL_DAY_COST_USD), { status: 200 })
+      return new Response(chargeDay(label, world.dayCostsUsd?.[label] ?? NORMAL_DAY_COST_USD), { status: 200 })
     }
     if (url.hostname === 'api.vercel.com' && url.pathname === '/v1/integrations/configurations') {
       return json(neonConfigurations(world.neonTotalCents ?? NORMAL_NEON_CENTS))
@@ -122,14 +123,14 @@ const ENVIRONMENT = Object.freeze({
   GITHUB_RUN_ID: '777',
 })
 
-async function run(world: World, dryRun = false) {
+async function run(world: World, dryRun = false, now = NOW) {
   const calls: Call[] = []
   const output: string[] = []
   const originalLog = console.log
   console.log = (...values: unknown[]) => { output.push(values.join(' ')) }
   try {
     const result = await runCostTripwire({
-      dryRun, now: NOW, environment: { ...ENVIRONMENT }, fetcher: fakeProviders(world, calls),
+      dryRun, now, environment: { ...ENVIRONMENT }, fetcher: fakeProviders(world, calls),
     })
     return { result, calls, output: output.join('\n') }
   } finally {
@@ -221,4 +222,15 @@ test('dry run reads every provider, prints the numbers, and writes nothing', asy
   assert.match(output, /Would open or add to "Cost tripwire 2026-11-12"/u)
   assert.match(output, /Vercel[^\n]*2026-10-12 to 2026-11-11[^\n]*31 of 31 days/u)
   assert.doesNotMatch(output, /canary/u)
+})
+
+test('on the second day of a cycle a flood on the last day of the old cycle still turns the run red', async () => {
+  const secondDay = new Date('2026-11-13T14:23:00.000Z')
+  const { result, calls, output } = await run({ dayCostsUsd: { '2026-11-11': 9 } }, true, secondDay)
+
+  assert.equal(result.red, true)
+  assert.match(output, /Vercel spent \$9\.00 on 2026-11-11, over the \$3\.00 limit for one day/u)
+  assert.match(output, /Vercel \(cycle 2026-11-12 to 2026-12-11, 1 of 30 days read\): \$1\.30 so far/u,
+    'the old cycle day is checked against the one-day limit but kept out of the new cycle total')
+  assert.equal(calls.filter(call => call.url.pathname === '/v1/billing/charges').length, 2)
 })

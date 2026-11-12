@@ -22,6 +22,8 @@ const DAY_MS = 24 * 60 * 60 * 1000
 // treated as settled; earlier in the UTC day the run stops one day further back.
 const CHARGE_DAY_SETTLED_HOUR_UTC = 12
 // Day limits look at the last two settled days, so one skipped scheduled run cannot hide a day.
+// On the first day of a cycle the earlier of the two is the old cycle's last day: it is read
+// and checked for the day limits, but kept out of the new cycle's total.
 const DAILY_LIMIT_LOOKBACK_DAYS = 2
 const NEON_SPENDING_MAX_AGE_HOURS = 48
 const MIN_PROJECTION_BASIS_MS = DAY_MS
@@ -77,6 +79,7 @@ export type VercelCycle = Readonly<{
   lastDay: string
   length: number
   daysToRead: readonly string[]
+  dayLimitDays: readonly string[]
 }>
 
 type NeonSpendingItem = Readonly<{ name: string; quantity: number; units: string; totalUsd: number }>
@@ -310,7 +313,18 @@ export function vercelCycleThrough(latestDay: string, startDay: number): VercelC
     lastDay: utcDay(next - DAY_MS),
     length: Math.round((next - first) / DAY_MS),
     daysToRead: Object.freeze(Array.from({ length: readCount }, (_, index) => utcDay(first + index * DAY_MS))),
+    dayLimitDays: Object.freeze(Array.from({ length: DAILY_LIMIT_LOOKBACK_DAYS }, (_, index) => (
+      utcDay(latest.getTime() - (DAILY_LIMIT_LOOKBACK_DAYS - 1 - index) * DAY_MS)
+    ))),
   })
+}
+
+function vercelDaysToFetch(cycle: VercelCycle): readonly string[] {
+  return Object.freeze([...new Set([...cycle.dayLimitDays, ...cycle.daysToRead])].sort())
+}
+
+function inCycle(cycle: VercelCycle, date: string): boolean {
+  return date >= cycle.firstDay && date <= cycle.lastDay
 }
 
 export function chargeRowsForDay(day: string, text: string, now: Date): readonly FocusBillingRow[] {
@@ -382,14 +396,15 @@ function count(value: number): string {
   return Math.round(value).toLocaleString('en-US')
 }
 
-function vercelSoFar(summary: BillingSummary): number {
-  return roundedCurrency(summary.teamSpendByDay.reduce((sum, day) => sum + day.effectiveCostUsd, 0))
+function vercelSoFar(cycle: VercelCycle, summary: BillingSummary): number {
+  const cycleDays = summary.teamSpendByDay.filter(day => inCycle(cycle, day.date))
+  return roundedCurrency(cycleDays.reduce((sum, day) => sum + day.effectiveCostUsd, 0))
 }
 
 function project(readings: CostReadings): Projection {
   const vercel = readings.vercel
   const neon = readings.neonSpending
-  const vercelSoFarUsd = vercel ? vercelSoFar(vercel.summary) : undefined
+  const vercelSoFarUsd = vercel ? vercelSoFar(vercel.cycle, vercel.summary) : undefined
   const vercelProjectedUsd = vercel && vercelSoFarUsd !== undefined
     ? vercelSoFarUsd * vercel.cycle.length / vercel.cycle.daysToRead.length
     : undefined
@@ -424,7 +439,7 @@ function budgetFindings(projection: Projection, thresholds: CostThresholds): rea
 function dailyFindings(readings: CostReadings, thresholds: CostThresholds): readonly string[] {
   const vercel = readings.vercel
   if (!vercel) return []
-  const checkedDays = new Set(vercel.cycle.daysToRead.slice(-DAILY_LIMIT_LOOKBACK_DAYS))
+  const checkedDays = new Set(vercel.cycle.dayLimitDays)
   const spend = vercel.summary.teamSpendByDay
     .filter(day => checkedDays.has(day.date) && day.effectiveCostUsd > thresholds.vercel.maxDailySpendUsd)
     .map(day => `Vercel spent ${money(day.effectiveCostUsd)} on ${day.date}, over the ${money(thresholds.vercel.maxDailySpendUsd)} limit for one day.`)
@@ -515,12 +530,14 @@ function billLines(readings: CostReadings, projection: Projection, thresholds: C
 }
 
 function dayTableLines(readings: CostReadings): readonly string[] {
-  const summary = readings.vercel?.summary
-  if (!summary) return []
+  const vercel = readings.vercel
+  if (!vercel) return []
+  const summary = vercel.summary
   const lines = ['', '### Vercel by charge day', '', `| Day | Team cost | ${WATCHED_PROJECT} CDN requests | ${WATCHED_PROJECT} function invocations |`, '|---|---:|---:|---:|']
   for (const day of summary.teamSpendByDay) {
     const watched = summary.projectDays.find(row => row.date === day.date && row.project === WATCHED_PROJECT)
-    lines.push(`| ${day.date} | ${money(day.effectiveCostUsd)} | ${count(watched?.edgeRequests ?? 0)} | ${count(watched?.functionInvocations ?? 0)} |`)
+    const label = inCycle(vercel.cycle, day.date) ? day.date : `${day.date} (old cycle, day limits only)`
+    lines.push(`| ${label} | ${money(day.effectiveCostUsd)} | ${count(watched?.edgeRequests ?? 0)} | ${count(watched?.functionInvocations ?? 0)} |`)
   }
   return lines
 }
@@ -632,7 +649,7 @@ function absent(environment: NodeJS.ProcessEnv, names: readonly string[]): strin
 
 async function readVercelCycle(environment: NodeJS.ProcessEnv, fetcher: typeof fetch, now: Date, thresholds: CostThresholds) {
   const cycle = vercelCycleThrough(latestSettledChargeDay(now), thresholds.vercel.cycleStartDay)
-  const days = await readVercelChargeDays(cycle.daysToRead, environment.VERCEL_TEAM_ID ?? '', environment.VERCEL_TOKEN ?? '', fetcher)
+  const days = await readVercelChargeDays(vercelDaysToFetch(cycle), environment.VERCEL_TEAM_ID ?? '', environment.VERCEL_TOKEN ?? '', fetcher)
   const rows = days.flatMap(({ day, text }) => chargeRowsForDay(day, text, now))
   return Object.freeze({ cycle, summary: summarizeFocusBilling(rows) })
 }
@@ -645,7 +662,7 @@ async function readAll(environment: NodeJS.ProcessEnv, fetcher: typeof fetch, no
   const neonProject = environment.NEON_PROJECT_ID ?? ''
   return Promise.all([
     readProvider('Vercel charges', vercelMissing,
-      value => `Read ${value.cycle.daysToRead.length} charge days, one request each.`,
+      value => `Read ${vercelDaysToFetch(value.cycle).length} charge days, one request each.`,
       () => readVercelCycle(environment, fetcher, now, thresholds)),
     readProvider('Neon spending', vercelMissing, () => 'Read from the Vercel Neon integration.',
       async () => parseNeonSpending(await readVercelIntegrations(environment.VERCEL_TEAM_ID ?? '', environment.VERCEL_TOKEN ?? '', fetcher), now)),
