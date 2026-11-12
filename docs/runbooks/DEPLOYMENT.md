@@ -1563,6 +1563,43 @@ recreates: `things`, `kinds`, `active_labels`, `thing_later_holder_marks`,
 `thing_state_changes` it would only take SHARE UPDATE EXCLUSIVE, from revalidating their
 checks, because their changes sit behind `IF NOT EXISTS` tests that a rerun skips.
 
+### Events totals tally prerequisite
+
+The events list's settled tally (decision #196) needs
+`db/migrations/20261112_events_totals_tally.sql` before the change merges. It creates two
+new tables, `events_totals_tally` (kind, key type, key id, room set, items and text bytes,
+primary key on the first four, and the index `events_totals_tally_key`) and
+`events_totals_state` (one row: rule version 0, generation 0, kept change id 0, not trusted,
+not paused, not held off), and inserts that one row. It alters, references and locks no
+existing table, so no event writer waits on it, and it changes no existing row. Apply
+`npm run migrate:preview:events-totals-tally` to the PR's Preview database branch and to the
+shared Preview branch the Vercel preview reads, then apply it a second time to each to prove
+it is safe to repeat. Verify the column lists, the six named constraints of
+`events_totals_tally` validated, the tally empty and the one state row at kept change id 0;
+the migration's own closing block raises if either table differs. Take the required
+Production snapshot, for example `PRODUCTION_SNAPSHOT_NAME=pre-events-totals-tally-20261112`,
+apply `npm run migrate:production:events-totals-tally` from a fresh clone of the reviewed
+head, and record the same checks before merging. Never chain the migration with the merge.
+The rollout does not apply this migration, and `--prepare` does not query either database.
+
+```sql
+SELECT table_name, column_name, data_type, is_nullable
+FROM information_schema.columns
+WHERE table_schema = 'public' AND table_name IN ('events_totals_tally', 'events_totals_state')
+ORDER BY table_name, ordinal_position;
+SELECT conname, convalidated FROM pg_constraint
+WHERE conrelid = 'events_totals_tally'::regclass ORDER BY conname;
+SELECT (SELECT count(*) FROM events_totals_tally)::int AS tally_rows,
+  (SELECT count(*) FROM events_totals_state)::int AS state_rows,
+  (SELECT kept_change_id FROM events_totals_state) AS kept_change_id;
+```
+
+After the merge and deploy, the five-minute cron fills the tally across a few runs. Record
+the first `events_totals_check` line (`ok`, `trusted`, `full_ms`, `kept_ms_max`) in the
+migration record. The old application never reads or writes these tables, so the rollback
+is to merge the previous application, never to drop them; `events_totals_state.paused`
+stops the step without a deploy.
+
 ### When a migration times out
 
 Normal migrations run inside one transaction that the runner starts with

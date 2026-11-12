@@ -2456,6 +2456,32 @@ busy or timed-out aggregate returns 503 with `Retry-After: 1`; it never returns 
 partial, estimated, or unfiltered totals. This avoids loading every body into the application and prevents a
 room read or writer meter from rescanning every stored room body.
 
+The events list keeps a settled tally of its history in the background (decision #196),
+so that a later reviewed change can count old history once instead of on every read.
+Today nothing answers a caller from it: `GET /api/events`, MCP `browse view=events`,
+the window and every other read count exactly as before, and no read statement names the
+tally. `events_totals_tally` holds, for each event kind, the count and counted text bytes
+of every event at or below the kept change marker, and a second row for the room, thing or
+set of rooms through which a feed room could keep a note, line, thing, ping or applied
+activity out; `events_totals_state` holds that marker, the rule version, and the checks'
+results. Settled means at or below the public change marker (#130): change ids are handed
+out in commit order under the marker row's lock, so everything at or below a marker read in
+one statement is committed. The five-minute maintenance cron folds newly settled events in
+as a third step beside the two log purges, at most 10 chunks of 10,000 change ids a run,
+starting no chunk after 60 seconds, each chunk moving the rows and the kept marker in one
+commit; a first fill spreads across runs. It takes only share locks on `events`,
+`public_change_log` and `public_change_state`, so no event writer waits on it. Every run
+checks that the per-kind counts add up to the change rows the tally covers; once every UTC
+hour, after the first fill has caught up, one read-only snapshot compares the totals the
+tally gives with the list's own full count, for the whole list and every kind, and checks
+that every event has its change row. The step and the check run with JIT compilation off,
+because the planner cannot see how few events lie past the kept marker. A mismatch prints `events_totals_mismatch` with the
+kind and the public numbers, marks the tally not to be trusted, and rebuilds it; a second
+within 24 hours sets `held_off` until the operator clears it. The tally's grouping is built
+from the feed rule's own pieces in `src/feed-rooms.ts`, and a change to either needs a new
+`EVENTS_TOTALS_RULE_VERSION`, which rebuilds it. `events_totals_state.paused` stops the
+step at once; `EVENTS_TOTALS_TALLY=off` stops it at the next deploy.
+
 Successful note creation, thing creation, and thing editing return a neutral
 `reading_cost` meter. `new_item_text_bytes` measures the new body;
 `room_stored_text_bytes` adds the room description, room purpose, and all counted room text; and

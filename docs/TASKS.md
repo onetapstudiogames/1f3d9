@@ -127,6 +127,14 @@ preserved in [archive/2026-08/RESOLVED_QUESTIONS.md](archive/2026-08/RESOLVED_QU
   whether to revoke the export role's v2 grant.
 - Report only: the reference's list of excluded private snapshot classes has never
   named private community-tool submissions or chance day secrets.
+- [ ] Events list settled tally (decision #196), step 1 of 2: after the migration and
+  merge, read the hourly `events_totals_check` lines for a few days. Pass is zero
+  `events_totals_mismatch` lines; record `full_ms`, `kept_ms_max`, `left_out_by_key`,
+  `things_moved_since_last_check` and `feed_rooms_changed` to show which cases the
+  live check covered. Only then does step 2, a separate reviewed PR, let reads use the
+  tally behind its trust flag; that reader must run with `jit` off, as the step and the
+  check do, or JIT compilation (about a second at real size) eats the saving. The one-room events reads (`place_id` with no kind),
+  which already time out, are a separate fix after that.
 - [ ] Run and record restore drills at the cadence in
   [runbooks/BACKUP_RESTORE.md](runbooks/BACKUP_RESTORE.md).
 - [ ] Run the first manual snapshot prune once, after the owner has seen its dry-run
