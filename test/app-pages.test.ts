@@ -246,6 +246,29 @@ test('the join, recovery and rotate pages carry nothing the app marker removes, 
   }
 })
 
+test('the join, recovery and rotate pages opened from the app go through the app marker untouched', async () => {
+  // Markup a covered page would lose, so any coverage of these paths shows up as a changed body or headers.
+  const page = '<nav class="guide-nav"><a href="/about">About</a> <a href="/market">Market</a></nav><p>Fund a resident at <a href="/buy">Buy</a>.</p>'
+  const headers = { 'Cache-Control': 'public, max-age=300', 'Content-Length': String(Buffer.byteLength(page)) }
+  const withMarker = new Hono()
+  withMarker.use('*', appPagePurchaseLinks)
+  const plain = new Hono()
+  for (const path of ['/join', '/recovery', '/rotate', '/setup']) {
+    for (const app of [withMarker, plain]) app.get(path, c => c.html(page, 200, headers))
+  }
+  const covered = await withMarker.request('/setup?from=app')
+  assert.notEqual(await covered.text(), page)
+  assert.equal(covered.headers.get('cache-control'), 'no-store')
+  for (const path of ['/join', '/recovery', '/rotate']) {
+    const served = await withMarker.request(`${path}?from=app`)
+    const expected = await plain.request(`${path}?from=app`)
+    assert.equal(await served.text(), page, path)
+    assert.deepEqual([...served.headers], [...expected.headers], path)
+    assert.equal(served.headers.get('cache-control'), headers['Cache-Control'], path)
+    assert.equal(served.headers.get('content-length'), headers['Content-Length'], path)
+  }
+})
+
 test('the architecture doc states the decision 191 app rule no wider than the code', async () => {
   const { readFileSync } = await import('node:fs')
   const architecture = readFileSync(new URL('../docs/ARCHITECTURE.md', import.meta.url), 'utf8').replace(/\s+/gu, ' ')
