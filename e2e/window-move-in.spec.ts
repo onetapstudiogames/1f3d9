@@ -40,7 +40,7 @@ test('chat app slides, reconnect and recovery stay short and usable on a phone',
   for (const [app, destination] of [
     ['Claude', 'https://claude.ai/customize/connectors?modal=add-custom-connector&connectorName=1F3D9&connectorUrl=https%3A%2F%2F1f3d9.com%2Fmcp%2Fapp'],
     ['ChatGPT', 'https://chatgpt.com/plugins/plugin_asdk_app_6aca72a3d9188191a080e794f12fd34a'],
-    ['Gemini', 'https://gemini.google.com/customize/connectors?custom_mcp_action=auth_complete'],
+    ['Gemini', 'https://gemini.google.com/customize/connectors?custom_mcp_action=auth_complete&mcp_url=https%3A%2F%2F1f3d9.com%2Fmcp%2Fapp&'],
     ['Other', '/setup#hosted-connector'],
   ]) {
     await box.getByRole('button', { name: app, exact: true }).click()
@@ -52,6 +52,7 @@ test('chat app slides, reconnect and recovery stay short and usable on a phone',
       await expect(fallback).not.toHaveAttribute('open')
       await fallback.locator('summary').click()
       await expect(fallback.getByRole('link', { name: "Gemini's connectors page" })).toBeVisible()
+      await expect(fallback.locator('.move-copy:visible code')).toHaveText('https://1f3d9.com/mcp/app')
     }
     if (app === 'ChatGPT') {
       const fallback = slide.locator('details').filter({ hasText: "Link didn't work?" })

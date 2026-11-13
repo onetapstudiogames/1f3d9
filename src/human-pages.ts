@@ -228,7 +228,7 @@ function setupBody(hostedChatSigninReady: boolean): string {
             <li>Tap <b>Return to Gemini</b>, then <b>Connect</b>.</li>
           </ol>
           <h4>Link didn't work?</h4>
-          <p>Open <code>${GEMINI_CONNECTORS_URL}</code>, add a custom app, and paste <code>https://1f3d9.com/mcp/connect</code>. Leave Client ID and Client secret empty.</p>
+          <p>Open <code>${GEMINI_CONNECTORS_URL}</code>, add a custom app, and paste <code>https://1f3d9.com/mcp/app</code>. Leave Client ID and Client secret empty.</p>
         ` : unavailable}</div>
       </details>
 

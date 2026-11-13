@@ -17,6 +17,7 @@ Object.assign(process.env, {
 })
 
 const { WINDOW_MOVE_IN_HTML } = await import('../src/window-move-in.ts')
+const { GEMINI_CONNECT_URL, GEMINI_RECONNECT_URL } = await import('../src/move-in-copy.ts')
 const { mountHumanPages } = await import('../src/human-pages.ts')
 const { mountIdentityRoutes } = await import('../src/identity-browser.ts')
 const { renderCreditBuyPage } = await import('../src/credit-buy-page.ts')
@@ -39,8 +40,11 @@ const LLMS_DOOR_SENTENCE = 'Key-capable clients use https://1f3d9.com/mcp. Chat 
 const FRONT_DOOR_LINES = `- Key-capable local clients use https://1f3d9.com/mcp. Chat apps sign in at
   https://1f3d9.com/mcp/app; residents already at /mcp/connect keep it.
 `
-const MOVING_IN_LINES = `- Hosted chat with connector support: use https://1f3d9.com/mcp/app. Gemini still uses
-  https://1f3d9.com/mcp/connect for now, and a chat already there keeps it.`
+const MOVING_IN_LINES = `- Hosted chat with connector support: use https://1f3d9.com/mcp/app. A chat already
+  at https://1f3d9.com/mcp/connect keeps it.`
+// Main's GEMINI_CONNECT_URL before Gemini moved; a returning Gemini resident keeps it byte for byte.
+const GEMINI_LINK = (door: 'app' | 'connect') =>
+  `https://gemini.google.com/customize/connectors?custom_mcp_action=auth_complete&mcp_url=https%3A%2F%2F1f3d9.com%2Fmcp%2F${door}&gal_service_id=`
 
 function slide(name: string): string {
   const match = WINDOW_MOVE_IN_HTML.match(new RegExp(`<section class="move-slide" data-move-slide="${name}" hidden>([\\s\\S]*?)</section>`, 'u'))
@@ -122,14 +126,28 @@ test('the window ChatGPT slide opens the listing for a new resident and keeps Cr
   assert.doesNotMatch(returning, /\/mcp\/app|plugin_asdk_app/u)
 })
 
-test('the window Gemini slide still names only /mcp/connect', () => {
-  const gemini = slide('app-gemini')
-  assert.match(gemini, /mcp_url=https%3A%2F%2F1f3d9\.com%2Fmcp%2Fconnect/u)
-  assert.ok(gemini.includes(copyBox(CONNECT_ADDRESS)))
-  assert.doesNotMatch(gemini, /\/mcp\/app|%2Fmcp%2Fapp/u)
+test('the Gemini link adds /mcp/app for a new resident and keeps the old /mcp/connect link for a returning one', () => {
+  assert.equal(GEMINI_CONNECT_URL, GEMINI_LINK('app'))
+  assert.equal(GEMINI_RECONNECT_URL, GEMINI_LINK('connect'))
 })
 
-test('setup sends new Claude, ChatGPT and other chat apps to /mcp/app and keeps Reconnect and Gemini on /mcp/connect', async () => {
+test('the window Gemini slide adds and pastes /mcp/app for a new resident and /mcp/connect for a returning one', () => {
+  const gemini = slide('app-gemini')
+  const button = (door: 'app' | 'connect', mode: string) =>
+    `<p${mode}><a class="move-btn move-wide" href="${GEMINI_LINK(door).replaceAll('&', '&amp;')}" target="_blank" rel="noopener">Add 1F3D9 to Gemini ↗</a></p>`
+  assert.ok(gemini.includes(button('app', ' data-move-new')), 'new resident button')
+  assert.ok(gemini.includes(button('connect', ' data-move-returning hidden')), 'returning resident button')
+  assert.equal([...gemini.matchAll(/gemini\.google\.com\/customize\/connectors\?/gu)].length, 2)
+  const fold = gemini.match(/<details class="move-more"><summary>Link didn't work\?<\/summary>([\s\S]*?)<\/details>/u)?.[1] ?? ''
+  assert.ok(fold.includes(copyBox(APP_ADDRESS, ' data-move-new')), 'the fold copies /mcp/app for a new resident')
+  assert.ok(fold.includes(copyBox(CONNECT_ADDRESS, ' data-move-returning hidden')), 'the fold copies /mcp/connect for a returning one')
+  assert.equal([...gemini.matchAll(/class="move-copy"/gu)].length, 2)
+  // The taps stay as written: the same Gemini dialog with a different address.
+  assert.match(gemini, /<li>Tap <b>Next<\/b>, check the box, tap <b>Connect<\/b>\.<\/li><li>Tap <b>Agree and continue<\/b>\.<\/li>/u)
+  assert.match(gemini, /<li>Tap <b>Return to Gemini<\/b>, then <b>Connect<\/b>\.<\/li>/u)
+})
+
+test('setup sends new Claude, ChatGPT, Gemini and other chat apps to /mcp/app and keeps Reconnect on /mcp/connect', async () => {
   const claude = await setupSection('claude')
   assert.ok(claude.includes(`href="${CLAUDE_LINK('app')}"`))
   assert.doesNotMatch(claude, /%2Fmcp%2Fconnect/u)
@@ -148,20 +166,21 @@ test('setup sends new Claude, ChatGPT and other chat apps to /mcp/app and keeps 
   assert.match(other, /<li>Paste <code>https:\/\/1f3d9\.com\/mcp\/app<\/code>\. Leave other fields empty\.<\/li>/u)
 
   const gemini = await setupSection('gemini')
-  assert.match(gemini, /mcp_url=https%3A%2F%2F1f3d9\.com%2Fmcp%2Fconnect/u)
-  assert.match(gemini, /paste <code>https:\/\/1f3d9\.com\/mcp\/connect<\/code>/u)
-  assert.doesNotMatch(gemini, /\/mcp\/app|%2Fmcp%2Fapp/u)
+  assert.ok(gemini.includes(`href="${GEMINI_LINK('app').replaceAll('&', '&amp;')}"`))
+  assert.match(gemini, /paste <code>https:\/\/1f3d9\.com\/mcp\/app<\/code>\. Leave Client ID and Client secret empty\./u)
+  assert.doesNotMatch(gemini, /\/mcp\/connect|%2Fmcp%2Fconnect/u)
 
   const html = await setupHtml()
   assert.match(html, /<li>Add <code>https:\/\/1f3d9\.com\/mcp\/connect<\/code> again\.<\/li>/u, 'Reconnect keeps /mcp/connect')
   assert.match(html, /<li><b>Wrong address:<\/b> remove it, add <code>https:\/\/1f3d9\.com\/mcp\/app<\/code>\.<\/li>/u)
 })
 
-test('/join names /mcp/app for chat apps and keeps Gemini on /mcp/connect', async () => {
+test('/join names /mcp/app for every chat app', async () => {
   const routes = new Hono()
   mountIdentityRoutes(routes, { environment: { PUBLIC_ORIGIN: ORIGIN }, store: memoryStore().store, hostedChatSigninReady: true })
   const { html } = await pageState(routes, '/join')
-  assert.match(html, /Use the app's connector at <code>https:\/\/1f3d9\.com\/mcp\/app<\/code> \(Gemini: <code>https:\/\/1f3d9\.com\/mcp\/connect<\/code> for now\)\. Its private sign-in page keeps the resident key out of chat\./u)
+  assert.match(html, /Use the app's connector at <code>https:\/\/1f3d9\.com\/mcp\/app<\/code>\. Its private sign-in page keeps the resident key out of chat\./u)
+  assert.doesNotMatch(html, /Gemini: <code>|for now/u)
 })
 
 test('the served llms.txt carries the plugin release sentence and the served front door the short form', async () => {
@@ -207,10 +226,11 @@ test('the moving-in section names /mcp/app on all three doors and on its referen
   }
 })
 
-test('the MCP door reference names /mcp/app for browser sign-in apps and keeps Gemini on /mcp/connect', async () => {
+test('the MCP door reference names /mcp/app for every browser sign-in app, Gemini included', async () => {
   const reference = await (await app.request('/reference/mcp.txt')).text()
-  assert.ok(reference.includes('Chat apps that use browser sign-in, such as ChatGPT and Claude, connect at https://1f3d9.com/mcp/app and never receive the permanent resident key; Gemini still uses https://1f3d9.com/mcp/connect for now, and a chat already at https://1f3d9.com/mcp/connect keeps it.'))
-  assert.match(reference, /In Gemini, open [^\n]*paste https:\/\/1f3d9\.com\/mcp\/connect;/u)
+  assert.ok(reference.includes('Chat apps that use browser sign-in, such as ChatGPT, Claude and Gemini, connect at https://1f3d9.com/mcp/app and never receive the permanent resident key; a chat already at https://1f3d9.com/mcp/connect keeps it.'))
+  assert.match(reference, /In Gemini, open [^\n]*paste https:\/\/1f3d9\.com\/mcp\/app;/u)
+  assert.doesNotMatch(reference, /Gemini still uses/u)
 })
 
 test('the buy page says a coding agent buys for its own resident', () => {

@@ -95,7 +95,8 @@ export function registerIdentityJoinGuidanceTests(): void {
       assert.ok(hostedPath)
 
       if (ready) {
-        assert.match(hostedPath, /https:\/\/1f3d9\.com\/mcp\/app<\/code> \(Gemini: <code>https:\/\/1f3d9\.com\/mcp\/connect<\/code> for now\)/u)
+        assert.match(hostedPath, /Use the app's connector at <code>https:\/\/1f3d9\.com\/mcp\/app<\/code>\. /u)
+        assert.doesNotMatch(hostedPath, /\/mcp\/connect/u)
         assert.doesNotMatch(hostedPath, /unavailable on this deployment/iu)
       } else {
         assert.doesNotMatch(hostedPath, /\/mcp\/(?:app|connect)/u)

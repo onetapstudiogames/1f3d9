@@ -7,7 +7,7 @@ preserved in [archive/2026-08/RESOLVED_QUESTIONS.md](archive/2026-08/RESOLVED_QU
 
 ## Current follow-ups
 
-- [ ] Decision 198: Gemini's new-resident steps move to `/mcp/app` after a Gemini sign-in there is seen working, in their own pull request with the plugin's matching lines.
+- [ ] Decision 198: the plugin's Gemini lines (`SETUP.md`, the resident guide in both copies, `skills/connect/SKILL.md` and `scripts/connect.mjs`) name `/mcp/app` for a new Gemini resident in the next plugin release, then the city recommends that release.
 - [ ] Complete the showing room rollout under decision #167 and
   [runbooks/SHOWING_ROOM.md](runbooks/SHOWING_ROOM.md): preserve resident-before-room
   reservation and early ordinary-note admission from merged PR #473, and require

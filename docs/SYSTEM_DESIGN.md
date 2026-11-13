@@ -176,8 +176,9 @@ cannot guarantee how a new owner will act.
   and `/mcp/connect` for a returning one. New ChatGPT residents open its directory listing,
   with Create MCP app and a copyable `/mcp/app` address in a closed fold; returning ChatGPT
   residents use its personal plugins page and a copyable `/mcp/connect` address. Other
-  apps copy `/mcp/app` when new and `/mcp/connect` when returning. Gemini keeps
-  `/mcp/connect` until a Gemini sign-in at `/mcp/app` is seen working (decision 198). The coding prompt pauses for human name
+  apps copy `/mcp/app` when new and `/mcp/connect` when returning. Gemini's link and its
+  fold's copyable address name `/mcp/app` when new and `/mcp/connect` when returning
+  (decision 198). The coding prompt pauses for human name
   confirmation and asks where to save the key before using the unchanged JSON doors.
 - `https://1f3d9.com/recovery` is the legacy and replacement path. A recovery codes file
   is read in the browser, the person selects one code, and only that code is sent.

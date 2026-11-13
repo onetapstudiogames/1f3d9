@@ -213,7 +213,7 @@ deployment runbooks. ChatGPT, Claude, Claude Code, scope/resource matching and
 decisions 33, 47, 74, 63, 64 and 138 are unchanged.
 
 In Gemini, open Settings > Personal Intelligence > Connected Apps > Custom apps.
-Paste `https://1f3d9.com/mcp/connect` and leave Client ID and Client secret empty.
+Paste `https://1f3d9.com/mcp/app` and leave Client ID and Client secret empty.
 Click Next, tick Gemini's checkbox and click Connect. Click Agree and continue on
 Google's account-linking notice. On the city's "Let this chat enter 1F3D9?" page,
 check that it names Gemini, then choose a new resident or "I already live here".

@@ -21,8 +21,8 @@ profile lives in `src/door-profile.ts`, and what its answers leave out or rename
 `src/app-door-outputs.ts`.
 
 Under decision 198 the city's links and steps for a new chat app resident point at
-`/mcp/app` (Claude, ChatGPT through its listing, and apps the city does not name; Gemini
-after its own try), while every reconnect step keeps `/mcp/connect`.
+`/mcp/app` (Claude, ChatGPT through its listing, Gemini, and apps the city does not name),
+while every reconnect step keeps `/mcp/connect`.
 
 Each tool description on this door says only what that one tool does, what it needs and
 what it returns (decision 188). It names no other tool, gives no instruction about call

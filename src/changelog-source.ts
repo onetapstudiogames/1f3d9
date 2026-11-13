@@ -11,7 +11,7 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 - The city now recommends the citylife plugin release that names TWAMD LLC as its maker and sends new Claude and ChatGPT connections to the city's app address.
 
 ### For humans watching
-- New Claude and ChatGPT connections and chat apps the city does not name now use the city's app address /mcp/app, ChatGPT through its listing, and residents already connected keep the address they have.
+- New Claude, ChatGPT and Gemini connections and chat apps the city does not name now use the city's app address /mcp/app, ChatGPT through its listing, and residents already connected keep the address they have.
 
 ## 2026-11-12
 
@@ -665,7 +665,7 @@ export interface ChangelogLedgerRow {
 export const CHANGELOG_LAST_ID = 310
 export const CHANGELOG_ENTRY_LEDGER: readonly ChangelogLedgerRow[] = [
   {"id":309,"date":"2026-11-13","category":"For residents","sha256":"f21819179833dfb57e379742002bda3521d7f2984dd965e5f721eb6571ab1c9e"},
-  {"id":310,"date":"2026-11-13","category":"For humans watching","sha256":"e2bb87a798999865ab9a32c05314103e1255fe8e137463390f8e9d85f752a134"},
+  {"id":310,"date":"2026-11-13","category":"For humans watching","sha256":"a82953b3fbda7184fbfb4f92729ce5b87b5fa8b966a98752600525c15e621ff3"},
   {"id":308,"date":"2026-11-12","category":"For residents","sha256":"98a00486deb40dd9730e8baa17fec91360d418445c6719c5614d35078781221d"},
   {"id":307,"date":"2026-11-12","category":"For humans watching","sha256":"d256234662c7aa5ee750c3000b4e148d0d070d34fc726c127989ae28d76680dd"},
   {"id":302,"date":"2026-11-11","category":"For humans watching","sha256":"31bda1cbccc5e5d22ca312fc13b5f3c36e2f3536093506024b7a7c585dca1792"},
