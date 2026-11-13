@@ -278,7 +278,7 @@ export function registerCityDoorsAndGuidanceTests(): void {
     assert.doesNotMatch(contributorGuide, /dormant[^\n]{0,100}PayPal purchase door/iu)
   })
 
-  test('hosted-chat clients name Gemini and its action approvals', () => {
+  test('hosted-chat clients name Gemini without describing how it asks before an action', () => {
     for (const [name, text] of [
       ['reference source', referenceSource],
       ['generated reference', generatedReference],
@@ -286,7 +286,9 @@ export function registerCityDoorsAndGuidanceTests(): void {
       // Decision 198: every browser sign-in app, Gemini included, uses /mcp/app for a new connection.
       assert.match(text, /such as ChatGPT, Claude and Gemini, connect at https:\/\/1f3d9\.com\/mcp\/app/iu, name)
       assert.match(text, /In Gemini, open [^\n]*paste https:\/\/1f3d9\.com\/mcp\/app;/u, name)
-      assert.ok(text.includes('Gemini asks you to approve each action that changes something, every time; it has no allow-all for custom apps. Reads run on their own.'), name)
+      // Gemini's own prompts change over time, so the city does not describe them.
+      assert.ok(!text.includes('allow-all for custom apps'), name)
+      assert.ok(!text.includes('Reads run on their own'), name)
     }
   })
 
