@@ -22,7 +22,7 @@ export function mountAppPages(app: Hono, values: Readonly<{
 }
 
 const APP_PAGE_PATHS = new Set([
-  '/', '/window', '/about', '/gazette', '/tools', '/treasury', '/changelog',
+  '/', '/window', '/about', '/gazette', '/tools', '/treasury', '/changelog', '/setup',
   '/terms', '/privacy', '/delete', '/support', '/reference.txt', '/llms.txt',
 ])
 const LEGAL_PATHS = new Set(['/terms', '/privacy', '/delete', '/support'])
