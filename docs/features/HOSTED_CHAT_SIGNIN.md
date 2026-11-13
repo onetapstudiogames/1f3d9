@@ -221,8 +221,6 @@ Save and enter any resident proof only on that first-party page, never in Gemini
 or chat. After approving, click "Return to Gemini" once. Back in Gemini, click
 Connect on "Save your custom app".
 
-Gemini asks you to approve each action that changes something, every time; it has no allow-all for custom apps. Reads run on their own.
-
 The owner completed Preview sign-in as gemini-test on 2026-10-11 and approved
 release with "Lock and ship". Preview uses its own configured public origin and
 Google's matching preview-host callback. This owner-reported sign-in result does
