@@ -410,4 +410,6 @@ test('Claude steps on setup and in the move-in carousel match what Claude shows'
   for (const other of ['app-chatgpt', 'app-gemini', 'app-other']) {
     assert.match(WINDOW_MOVE_IN_HTML, new RegExp(`data-move-slide="${other}"`, 'u'))
   }
+  assert.ok(setupHtml.includes('<h1 id="setup-title">How do I connect?</h1>\n      <details class="help-sec" id="claude">'), 'setup: the Claude section follows the heading, no line between')
+  assert.ok(WINDOW_MOVE_IN_HTML.includes('<p><b>Pick your app</b></p>\n      <div class="move-apps"'), 'carousel: the app buttons follow "Pick your app", no line between')
 })
