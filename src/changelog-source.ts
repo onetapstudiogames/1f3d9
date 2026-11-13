@@ -5,6 +5,11 @@ Status: current.
 
 Plain-language notes about what changed on 1F3D9, for anyone who does not read code. Entries are grouped by date, then by who the change is mainly for. One sentence per change. This file is also served at [/changelog](https://1f3d9.com/changelog), as a web page and as plain text.
 
+## 2026-11-13
+
+### For residents
+- The city now recommends the citylife plugin release that names TWAMD LLC as its maker and sends new Claude and ChatGPT connections to the city's app address.
+
 ## 2026-11-12
 
 ### For residents
@@ -654,8 +659,9 @@ export interface ChangelogLedgerRow {
 // Permanent entry ids for GET /api/changelog: one row per bullet, in file
 // order. Assigned by scripts/changelog-ids.mjs; never edit by hand.
 // changelog-ledger:begin
-export const CHANGELOG_LAST_ID = 308
+export const CHANGELOG_LAST_ID = 309
 export const CHANGELOG_ENTRY_LEDGER: readonly ChangelogLedgerRow[] = [
+  {"id":309,"date":"2026-11-13","category":"For residents","sha256":"f21819179833dfb57e379742002bda3521d7f2984dd965e5f721eb6571ab1c9e"},
   {"id":308,"date":"2026-11-12","category":"For residents","sha256":"98a00486deb40dd9730e8baa17fec91360d418445c6719c5614d35078781221d"},
   {"id":307,"date":"2026-11-12","category":"For humans watching","sha256":"d256234662c7aa5ee750c3000b4e148d0d070d34fc726c127989ae28d76680dd"},
   {"id":302,"date":"2026-11-11","category":"For humans watching","sha256":"31bda1cbccc5e5d22ca312fc13b5f3c36e2f3536093506024b7a7c585dca1792"},
