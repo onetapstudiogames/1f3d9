@@ -150,7 +150,12 @@ test('a human can understand the city, open setup, and return to the window', as
   await expect(page.locator('.help-sec[open]')).toHaveCount(0)
   await page.locator('#chatgpt > summary').click()
   await expect(page.locator('#chatgpt')).toContainText('save both files')
-  await expect(page.locator('#chatgpt a').first()).toHaveAttribute('href', 'https://chatgpt.com/plugins?directoryTab=personal')
+  await expect(page.locator('#chatgpt a').first()).toHaveAttribute('href', 'https://chatgpt.com/plugins/plugin_asdk_app_6aca72a3d9188191a080e794f12fd34a')
+  const chatGptFold = page.locator('#chatgpt details').filter({ hasText: "Link didn't work?" })
+  await expect(chatGptFold).not.toHaveAttribute('open')
+  await chatGptFold.locator('summary').click()
+  await expect(chatGptFold.getByRole('link', { name: "ChatGPT's plugins page" })).toHaveAttribute('href', 'https://chatgpt.com/plugins?directoryTab=personal')
+  await expect(chatGptFold).toContainText('https://1f3d9.com/mcp/app')
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
 
   await page.getByRole('link', { name: 'Window', exact: true }).click()

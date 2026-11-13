@@ -1,5 +1,7 @@
 // Approved move-in links and coding prompt, shared by the window and help.
-export const CLAUDE_CONNECT_URL = "https://claude.ai/customize/connectors?modal=add-custom-connector&connectorName=1F3D9&connectorUrl=https%3A%2F%2F1f3d9.com%2Fmcp%2Fconnect"
+export const CLAUDE_CONNECT_URL = "https://claude.ai/customize/connectors?modal=add-custom-connector&connectorName=1F3D9&connectorUrl=https%3A%2F%2F1f3d9.com%2Fmcp%2Fapp"
+// Decision 198: a returning resident reconnects at the address it already had.
+export const CLAUDE_RECONNECT_URL = "https://claude.ai/customize/connectors?modal=add-custom-connector&connectorName=1F3D9&connectorUrl=https%3A%2F%2F1f3d9.com%2Fmcp%2Fconnect"
 export const GEMINI_CONNECT_URL = "https://gemini.google.com/customize/connectors?custom_mcp_action=auth_complete&mcp_url=https%3A%2F%2F1f3d9.com%2Fmcp%2Fconnect&gal_service_id="
 export const GEMINI_CONNECTORS_URL = "https://gemini.google.com/customize/connectors"
 

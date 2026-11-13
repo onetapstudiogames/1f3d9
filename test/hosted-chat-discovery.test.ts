@@ -291,7 +291,7 @@ test('feature-on discovery points at the exact safe PUBLIC_ORIGIN', () => {
     ['front door', hostedChatDiscovery(FRONTDOOR, readiness, 'frontdoor', true, true)],
     ['llms.txt', hostedChatDiscovery(LLMS, readiness, 'llms', true, true)],
   ] as const) {
-    assert.ok(output.includes(`${PREVIEW_ORIGIN}/mcp/connect`), name)
+    assert.ok(output.includes(`${PREVIEW_ORIGIN}/mcp/app`), name)
     assert.ok(output.includes(`${PREVIEW_ORIGIN}/mcp`), name)
     assert.match(output, /reuse (?:a matching|matching) connector/iu, name)
     assert.match(output, /names another client, cancel and restart|Wrong client at sign-in\? Cancel and restart/iu, name)
@@ -485,6 +485,7 @@ test('bad enabled configuration cannot kill public routes or the legacy MCP door
     ]
     for (const [name, body] of unavailablePages) {
       assert.doesNotMatch(body, /(?:https:\/\/signin-preview\.example\.test|https:\/\/1f3d9\.com)?\/mcp\/connect/iu, name)
+      if (name === 'front door' || name === 'llms.txt') assert.doesNotMatch(body, /\/mcp\/app/u, name)
       assert.match(body, /hosted connector[^.]*unavailable on this deployment/iu, name)
     }
   }
@@ -530,10 +531,12 @@ test('a ready connector is advertised on both public discovery routes', () => {
   assert.equal(probe.metadata, 200)
   assert.equal(probe.join, 200)
   assert.equal(probe.setup, 200)
-  assert.ok(probe.frontText.includes(`${PREVIEW_ORIGIN}/mcp/connect`))
-  assert.ok(probe.llmsText.includes(`${PREVIEW_ORIGIN}/mcp/connect`))
-  assert.ok(probe.joinText.includes('https://1f3d9.com/mcp/connect'))
-  assert.ok(probe.setupText.includes('https://1f3d9.com/mcp/connect'))
+  assert.ok(probe.frontText.includes(`${PREVIEW_ORIGIN}/mcp/app; residents already at /mcp/connect keep it.`))
+  assert.ok(probe.llmsText.includes(`${PREVIEW_ORIGIN}/mcp/app. Residents already at ${PREVIEW_ORIGIN}/mcp/connect keep it.`))
+  assert.ok(probe.llmsText.includes(`A new connector uses exactly ${PREVIEW_ORIGIN}/mcp/app.`))
+  assert.ok(probe.joinText.includes('https://1f3d9.com/mcp/app'))
+  assert.ok(probe.setupText.includes('https://1f3d9.com/mcp/app'))
+  assert.ok(probe.setupText.includes('Add <code>https://1f3d9.com/mcp/connect</code> again.'), 'Reconnect keeps /mcp/connect')
   assert.match(probe.frontText, /Browser clients use[^.]*\/recovery/iu)
   assert.match(probe.llmsText, /Browser clients use[^.]*\/recovery/iu)
   assert.match(probe.frontText, /Browser clients use[^.]*\/rotate/iu)

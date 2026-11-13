@@ -46,8 +46,8 @@ export function registerCityDoorsAndGuidanceTests(): void {
   test('contributor guidance names the current locked-decision count', () => {
     const recorded = [...decisions.matchAll(/^\|\s+(\d+)\s+\|/gmu)]
       .map(match => Number(match[1]))
-    assert.deepEqual(recorded, Array.from({ length: 197 }, (_, index) => index + 1))
-    assert.equal(recorded.at(-1), 197)
+    assert.deepEqual(recorded, Array.from({ length: 198 }, (_, index) => index + 1))
+    assert.equal(recorded.at(-1), 198)
     assert.match(decisions, /\| 171 \|[^\n]*only if its kind allows it and its owner chooses it[^\n]*LOCKED on merge \(owner, 2026-11-06, in chat: "Trimmed version with label and links"/u)
     assert.match(decisions, /\| 172 \|[^\n]*narrows #30[^\n]*#62 and #108[^\n]*#105, #112, #113 and #114[^\n]*"Sure"/u)
     assert.match(decisions, /\| 173 \|[^\n]*narrows #155 and #156[^\n]*extends #106[^\n]*#167 unchanged[^\n]*#37 unchanged/u)
@@ -89,7 +89,7 @@ export function registerCityDoorsAndGuidanceTests(): void {
     assert.match(decisions, /\| 160 \|[^\n]*A human may mute residents, places, notes, things and kinds in their own browser[^\n]*Neither founder account, residents #1 and #2, can be muted \(#159\)[^\n]*#9, #71 and docs\/INVARIANTS\.md item 21 are unchanged in substance[^\n]*LOCKED \(owner, 2026-10-14, proposal decisions section C[^\n]*"Go 11", 2026-10-18\)/u)
     assert.match(decisions, /\| 161 \|[^\n]*muted words judge encoded text on its translation, whatever its encoded-text filter says[^\n]*never on the encoded digits or symbols[^\n]*narrows #157's "it runs after describe"[^\n]*for the resident who chose describe or who keeps muted words[^\n]*LOCKED \(owner, 2026-10-19, in chat: "For number 1, it can be "translated" and checked for words in block/u)
     assert.match(decisions, /\| 162 \|[^\n]*On `\/mcp\/connect` only, from the deploy until 2026-11-03T23:59:59Z[^\n]*`CONNECT_LABEL_TEST_END`[^\n]*deliberately less than honest[^\n]*narrows #135 for `\/mcp\/connect` only[^\n]*LOCKED \(owner, 2026-10-20: "Should we try a temp fix of marking everything non destructive to see what happens"[^\n]*"I'd say yeah\. Let's try it on old connector"\)/u)
-    assert.match(contributorGuide, /\(197 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
+    assert.match(contributorGuide, /\(198 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
     assert.match(decisions, /\| 134 \|[^\n]*founded before renaming went live[^\n]*after-room-place-<place_id>-rename[^\n]*LOCKED/iu)
     assert.match(decisions, /\| 135 \|[^\n]*destructiveHint[^\n]*follows the MCP spec[^\n]*delete, overwrite, spend, or transfer[^\n]*LOCKED/iu)
     const normalizedReference = referenceSource.replace(/\s+/gu, ' ')
@@ -283,7 +283,8 @@ export function registerCityDoorsAndGuidanceTests(): void {
       ['reference source', referenceSource],
       ['generated reference', generatedReference],
     ] as const) {
-      assert.match(text, /ChatGPT, Claude and Gemini[\s\S]{0,180}\/mcp\/connect/iu, name)
+      // Decision 198: browser sign-in apps use /mcp/app; Gemini keeps /mcp/connect until its own try.
+      assert.match(text, /such as ChatGPT and Claude, connect at https:\/\/1f3d9\.com\/mcp\/app[\s\S]{0,120}Gemini still uses https:\/\/1f3d9\.com\/mcp\/connect/iu, name)
       assert.ok(text.includes('Gemini asks you to approve each action that changes something, every time; it has no allow-all for custom apps. Reads run on their own.'), name)
     }
   })

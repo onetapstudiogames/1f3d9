@@ -38,8 +38,8 @@ test('chat app slides, reconnect and recovery stay short and usable on a phone',
   const slide = box.locator('[data-move-slide]:not([hidden])')
   await expect(box.getByRole('heading', { name: '4 steps', exact: true })).toBeVisible()
   for (const [app, destination] of [
-    ['Claude', 'https://claude.ai/customize/connectors?modal=add-custom-connector'],
-    ['ChatGPT', 'https://chatgpt.com/plugins?directoryTab=personal'],
+    ['Claude', 'https://claude.ai/customize/connectors?modal=add-custom-connector&connectorName=1F3D9&connectorUrl=https%3A%2F%2F1f3d9.com%2Fmcp%2Fapp'],
+    ['ChatGPT', 'https://chatgpt.com/plugins/plugin_asdk_app_6aca72a3d9188191a080e794f12fd34a'],
     ['Gemini', 'https://gemini.google.com/customize/connectors?custom_mcp_action=auth_complete'],
     ['Other', '/setup#hosted-connector'],
   ]) {
@@ -48,11 +48,19 @@ test('chat app slides, reconnect and recovery stay short and usable on a phone',
     await expect(slide.getByText('First, ask your agent what name it wants.', { exact: true })).toBeVisible()
     await expect(box.locator(`a[href^="${destination}"]`).first()).toBeVisible()
     if (app === 'Gemini') {
-      const fallback = box.locator('details').filter({ hasText: "Link didn't work?" })
+      const fallback = slide.locator('details').filter({ hasText: "Link didn't work?" })
       await expect(fallback).not.toHaveAttribute('open')
       await fallback.locator('summary').click()
       await expect(fallback.getByRole('link', { name: "Gemini's connectors page" })).toBeVisible()
     }
+    if (app === 'ChatGPT') {
+      const fallback = slide.locator('details').filter({ hasText: "Link didn't work?" })
+      await expect(fallback).not.toHaveAttribute('open')
+      await fallback.locator('summary').click()
+      await expect(fallback.locator('a[href="https://chatgpt.com/plugins?directoryTab=personal"]')).toBeVisible()
+      await expect(fallback.locator('.move-copy code')).toHaveText('https://1f3d9.com/mcp/app')
+    }
+    if (app === 'Other') await expect(slide.locator('.move-copy:visible code')).toHaveText('https://1f3d9.com/mcp/app')
     expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false)
     await box.getByRole('button', { name: '< Back', exact: true }).click()
   }
@@ -65,6 +73,9 @@ test('chat app slides, reconnect and recovery stay short and usable on a phone',
   await box.getByRole('button', { name: 'Next >', exact: true }).click()
   await expect(slide.getByText('I already live here', { exact: true })).toBeVisible()
   await expect(slide.getByText('If Claude answers right away, you are already connected.')).toBeVisible()
+  // Decision 198: a returning resident reconnects at the address it already had.
+  await expect(slide.locator('a[href$="connectorUrl=https%3A%2F%2F1f3d9.com%2Fmcp%2Fconnect"]')).toBeVisible()
+  await expect(slide.locator('a[href$="connectorUrl=https%3A%2F%2F1f3d9.com%2Fmcp%2Fapp"]')).toBeHidden()
   await expect(slide.getByText('First, ask your agent what name it wants.', { exact: true })).toBeHidden()
 })
 

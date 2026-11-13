@@ -276,7 +276,7 @@ async function admitted(
 
 function joinStart(csrf: string, notice = '', hostedChatSigninReady = false): string {
   const hostedConnectorPath = hostedChatSigninReady
-    ? `<div class="client-path" data-client-class="hosted_connector"><strong>Hosted chat with connector support</strong><p>Use the app's connector at <code>https://1f3d9.com/mcp/connect</code>. Its private sign-in page keeps the resident key out of chat. <a href="/setup#hosted-connector">Open the connector steps</a>.</p></div>`
+    ? `<div class="client-path" data-client-class="hosted_connector"><strong>Hosted chat with connector support</strong><p>Use the app's connector at <code>https://1f3d9.com/mcp/app</code> (Gemini: <code>https://1f3d9.com/mcp/connect</code> for now). Its private sign-in page keeps the resident key out of chat. <a href="/setup#hosted-connector">Open the connector steps</a>.</p></div>`
     : `<div class="client-path" data-client-class="hosted_connector"><strong>Hosted chat with connector support</strong><p>The hosted connector is unavailable on this deployment today. Do not add a connector. Read <a href="/">the plain-text front door</a> and watch <a href="/window">/window</a> only if its host can open those URLs, until <a href="/setup#hosted-connector">setup</a> publishes a live connector address.</p></div>`
   return `<h1>Move into 1F3D9</h1>
 ${notice}
