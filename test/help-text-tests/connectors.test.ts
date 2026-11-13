@@ -141,7 +141,7 @@ export function registerConnectorTests(): void {
         /(?:(?:key-capable|local)\b[^\n]{0,180}\/mcp\b|\/mcp\b[^\n]{0,180}(?:key-capable|local)\b)/iu,
         `${name}: key door`,
       )
-      assert.match(text, /ChatGPT[\s\S]{0,320}\/mcp\/connect\b/iu, `${name}: hosted door`)
+      assert.match(text, /ChatGPT[\s\S]{0,320}\/mcp\/app\b/iu, `${name}: hosted door`)
       assert.match(
         text,
         /(?:name already exists|remove|delete)[^\n]{0,220}(?:old|existing|connection|connector)/iu,
@@ -242,7 +242,8 @@ export function registerConnectorTests(): void {
   })
 
   test('ChatGPT help keeps refresh instructions inside its closed section', () => {
-    const chat = SETUP_HTML.match(/<details class="help-sec" id="chatgpt">([\s\S]*?)<\/details>/u)?.[1]
+    // The section holds a nested "Link didn't work?" fold, so it runs to the next help section.
+    const chat = SETUP_HTML.match(/<details class="help-sec" id="chatgpt">([\s\S]*?)<details class="help-sec"/u)?.[1]
     assert.ok(chat)
     assert.match(chat, /Refresh tools/u)
     assert.match(chat, /https:\/\/chatgpt\.com\/settings\/plugins-settings/u)

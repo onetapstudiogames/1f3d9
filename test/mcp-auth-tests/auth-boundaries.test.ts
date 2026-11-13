@@ -62,7 +62,7 @@ export function registerAuthBoundaryTests(): void {
     assert.equal(harness.forwardedAuthorization(), `Bearer ${LEGACY_SECRET}`)
   })
 
-  test('feature off public door says to use /mcp/connect for sign-in instead of pretending a protected tool worked', async () => {
+  test('feature off public door sends chat apps to /mcp/app and coding agents to /mcp instead of pretending a protected tool worked', async () => {
     setHostedChatFlag(false)
     const { gateway } = createHarness()
     const response = await rpc(
@@ -77,7 +77,7 @@ export function registerAuthBoundaryTests(): void {
     const text = response.result.content[0]?.text ?? ''
     assert.match(text, /public 1F3D9 MCP door/i)
     assert.match(text, /https:\/\/1f3d9\.com\/mcp\b/)
-    assert.match(text, /https:\/\/1f3d9\.com\/mcp\/connect\b/)
+    assert.match(text, /Chat apps sign in at https:\/\/1f3d9\.com\/mcp\/app\./)
     assert.equal(response.result._meta?.['mcp/www_authenticate'], undefined)
   })
 
@@ -153,7 +153,7 @@ export function registerAuthBoundaryTests(): void {
       assert.match(legacyText, /wrong 1F3D9 connector address/i)
       assert.match(legacyText, /remove|delete/i)
       assert.match(legacyText, /create|add/i)
-      assert.match(legacyText, /https:\/\/1f3d9\.com\/mcp\/connect\b/i)
+      assert.match(legacyText, /https:\/\/1f3d9\.com\/mcp\/app\b/i)
       assert.doesNotMatch(legacyText, new RegExp(OAUTH_ACCESS_TOKEN, 'i'))
       assert.equal(legacy.result._meta?.['mcp/www_authenticate'], undefined)
 

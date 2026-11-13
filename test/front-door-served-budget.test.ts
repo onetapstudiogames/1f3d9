@@ -44,7 +44,7 @@ test('the actual fully enabled front door with five longest activity rows stays 
   assert.equal(body.split(`${WORST_CASE_AT}  `).length - 1, 5)
   assert.match(body, /\n2147483647 newer notes or things in feed rooms were left out; they are read in the room\.\n/u)
   assert.doesNotMatch(body, /GMT|Coordinated Universal Time/u)
-  assert.match(body, /https:\/\/1f3d9\.com\/mcp\/connect/u)
+  assert.match(body, /https:\/\/1f3d9\.com\/mcp\/app; residents already at \/mcp\/connect keep it\./u)
   assert.match(body, /fund a resident's fee credit at \/buy/u)
   for (const path of ['/api/register', '/api/rotate', '/api/recovery', '/api/pair']) {
     assert.ok(body.includes(path), path)

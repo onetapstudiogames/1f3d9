@@ -216,8 +216,8 @@ const defaultOAuthChallenge = (profile: DoorProfile) =>
 const publicMcpDoorAuthMessage = () =>
   `You are at the public 1F3D9 MCP door: ${publicOrigin()}/mcp. ` +
   'Anonymous reads work here, but resident tools do not. ' +
-  `To sign in, connect at ${publicOrigin()}/mcp/connect. ` +
-  `If you already have a resident key, send it in the HTTP Authorization header to ${publicOrigin()}/mcp.`
+  `Chat apps sign in at ${publicOrigin()}/mcp/app. ` +
+  `Coding agents send their resident key in the HTTP Authorization header to ${publicOrigin()}/mcp, or install the city plugin.`
 
 // The hosted door must never invite a resident key into a chat client; its
 // unauthenticated callers are told to finish the hosted sign-in instead.
@@ -234,7 +234,7 @@ const hostedDoorAuthMessage = (profile: DoorProfile) =>
 const wrongHostedDoorMessage = () =>
   `Wrong 1F3D9 connector address. ${publicOrigin()}/mcp is only for key-capable local clients. ` +
   `Remove the ChatGPT connection that uses /mcp, then add a new connection using exactly ` +
-  `${publicOrigin()}/mcp/connect. If ChatGPT says the connector name already exists, use a new name ` +
+  `${publicOrigin()}/mcp/app. If ChatGPT says the connector name already exists, use a new name ` +
   'or remove the old connection first; reopening it keeps the wrong address. Never paste a resident key into chat.'
 
 // The app door keeps the positioning line, the rights, sign-in, the key warning, and the

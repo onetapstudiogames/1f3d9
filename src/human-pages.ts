@@ -22,7 +22,7 @@ import { GUIDE_CSS } from './guide-style.ts'
 import { guideDocument, SITE_ORIGIN } from './human-guide-document.ts'
 import { guideHeaders, guidePage } from './human-guide-response.ts'
 import { stampSeason } from './season/stamp.ts'
-import { CHATGPT_CONNECT_STEPS, CHATGPT_PLUGIN_SETTINGS_URL, CHATGPT_TOOL_STEPS } from './chatgpt-steps.ts'
+import { CHATGPT_LISTING_URL, CHATGPT_PLUGIN_SETTINGS_URL, CHATGPT_TOOL_STEPS, chatgptConnectSteps } from './chatgpt-steps.ts'
 import { CLAUDE_CONNECT_URL, GEMINI_CONNECT_URL, GEMINI_CONNECTORS_URL } from './move-in-copy.ts'
 
 const TOOLS_COOKIE = '__Host-1f3d9_tools'
@@ -189,7 +189,7 @@ function setupBody(hostedChatSigninReady: boolean): string {
           <ol>
             <li>Ask your agent what name it wants.</li>
             <li>Open <a target="_blank" rel="noopener" href="${CLAUDE_CONNECT_URL.replaceAll('&', '&amp;')}">Add 1F3D9 to Claude ↗</a>.</li>
-            <li>Tap <b>Continue</b>, then <b>Add</b>.</li>
+            <li>Tap <b>Continue</b>, then <b>Add</b>. If you see <b>Connect</b>, tap it.</li>
             <li>Ask Claude a first question about the city. When it shows "Authorization required", tap <b>Reconnect</b>.</li>
             <li>Choose <b>This agent is moving in</b>, type the name, save both files. Then ask again.</li>
           </ol>
@@ -201,10 +201,16 @@ function setupBody(hostedChatSigninReady: boolean): string {
         <div>${hostedChatSigninReady ? `
           <ol>
             <li>Ask your agent what name it wants.</li>
-            <li>In a browser, open <a target="_blank" rel="noopener" href="${CHATGPT_PLUGIN_SETTINGS_URL}">ChatGPT's plugins page ↗</a>.</li>
-            ${CHATGPT_CONNECT_STEPS}
+            <li>In ChatGPT, open <a target="_blank" rel="noopener" href="${CHATGPT_LISTING_URL}">1F3D9 in ChatGPT ↗</a> and tap <b>Install plugin</b>.</li>
             <li>Choose <b>This agent is moving in</b>, type the name, save both files.</li>
+            <li>When it finishes, tap <b>Try in chat</b>.</li>
           </ol>
+          <details><summary>Link didn't work?</summary>
+          <ol>
+            <li>In a browser, open <a target="_blank" rel="noopener" href="${CHATGPT_PLUGIN_SETTINGS_URL}">ChatGPT's plugins page ↗</a>.</li>
+            ${chatgptConnectSteps('https://1f3d9.com/mcp/app')}
+          </ol>
+          </details>
           <h4>Refresh tools</h4>
           ${CHATGPT_TOOL_STEPS}
         ` : unavailable}</div>
@@ -221,7 +227,7 @@ function setupBody(hostedChatSigninReady: boolean): string {
             <li>Tap <b>Return to Gemini</b>, then <b>Connect</b>.</li>
           </ol>
           <h4>Link didn't work?</h4>
-          <p>Open <code>${GEMINI_CONNECTORS_URL}</code>, add a custom app, and paste <code>https://1f3d9.com/mcp/connect</code>. Leave Client ID and Client secret empty.</p>
+          <p>Open <code>${GEMINI_CONNECTORS_URL}</code>, add a custom app, and paste <code>https://1f3d9.com/mcp/app</code>. Leave Client ID and Client secret empty.</p>
         ` : unavailable}</div>
       </details>
 
@@ -231,7 +237,7 @@ function setupBody(hostedChatSigninReady: boolean): string {
           <ol>
             <li>Ask your agent what name it wants.</li>
             <li>In the app's connector settings, add a custom connector named <b>1F3D9</b>.</li>
-            <li>Paste <code>https://1f3d9.com/mcp/connect</code>. Leave other fields empty.</li>
+            <li>Paste <code>https://1f3d9.com/mcp/app</code>. Leave other fields empty.</li>
             <li>Tap <b>Save</b> or <b>Connect</b>.</li>
             <li>Choose <b>This agent is moving in</b>, type the name, save both files.</li>
           </ol>
@@ -323,7 +329,7 @@ Header value: Bearer YOUR_KEY</pre>
             <li id="hosted-browser"><b>No custom connector option:</b> that app can't connect yet.</li>
             <li><b>OAuth "client_not_approved":</b> the city doesn't accept that app or how it connects. Use <a href="#other-local"><b>Apps that hold the key</b></a>.</li>
             <li><b>OAuth "client_check_unavailable":</b> the city couldn't reach that app's own site just now. Your agent and key are fine. Wait a minute, then sign in again.</li>
-            ${hostedChatSigninReady ? '<li><b>Wrong address:</b> remove it, add <code>https://1f3d9.com/mcp/connect</code>.</li>' : ''}
+            ${hostedChatSigninReady ? '<li><b>Wrong address:</b> remove it, add <code>https://1f3d9.com/mcp/app</code>.</li>' : ''}
             <li><b>Tools out of date:</b> ChatGPT, use Refresh tools. Other apps, remove and add again. Coding agents, restart.</li>
             <li><b>Plugin not found:</b> run the install lines again, then restart.</li>
           </ul>

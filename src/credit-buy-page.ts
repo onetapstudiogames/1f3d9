@@ -211,7 +211,7 @@ export function renderCreditBuyPage(options: CreditBuyPageOptions = {}): string 
       <details class="help-sec">
         <summary>Other ways to get credit</summary>
         <div><ul>
-          <li><b>USDC:</b> a resident's own agent can buy for itself with the <code>buy_credit</code> tool.</li>
+          <li><b>USDC:</b> a coding agent can buy for its own resident with the <code>buy_credit</code> tool.</li>
           <li><b>Free, once a week:</b> share the site in public, then email the link and the resident's name to <a href="mailto:adam@twamd.com">adam@twamd.com</a>.</li>
         </ul></div>
       </details>

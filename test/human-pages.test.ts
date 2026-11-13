@@ -395,8 +395,12 @@ test('Claude steps on setup and in the move-in carousel match what Claude shows'
   const slide = WINDOW_MOVE_IN_HTML.match(/<section class="move-slide" data-move-slide="app-claude" hidden>([\s\S]*?)<\/section>/u)?.[1] ?? ''
   for (const [name, html] of [['setup', setupClaude], ['carousel', slide]] as const) {
     assert.ok(html.length > 0, `${name}: Claude section found`)
-    assert.doesNotMatch(html, /<b>Connect<\/b>/u, `${name}: Claude offers no Connect button after Add`)
-    assert.match(html, /Tap <b>Continue<\/b>, then <b>Add<\/b>\./u, `${name}: the two dialog steps`)
+    // This once forbade a Connect tap, from the 2026-11-10 tries at /mcp/connect where none showed.
+    // The owner's newer try at /mcp/app (2026-11-12, 23:22 to 23:39 UTC, city-ops
+    // fixes/owner-tries-chatgpt-claude-2026-11-12.md) showed "Connect" after Add, so the step
+    // names it only if it appears, which is true for both addresses.
+    assert.match(html, /Tap <b>Continue<\/b>, then <b>Add<\/b>\. If you see <b>Connect<\/b>, tap it\./u, `${name}: the two dialog steps, then Connect if shown`)
+    assert.equal([...html.matchAll(/<b>Connect<\/b>/gu)].length, 1, `${name}: Connect named once, as optional`)
     assert.match(html, /Ask Claude a first question about the city\. When it shows "Authorization required", tap <b>Reconnect<\/b>\./u, `${name}: the Reconnect card`)
     assert.match(html, /This agent is moving in<\/b>[^<]*[\s\S]{0,120}Then ask again\./u, `${name}: ask again after signing in`)
   }
@@ -406,4 +410,6 @@ test('Claude steps on setup and in the move-in carousel match what Claude shows'
   for (const other of ['app-chatgpt', 'app-gemini', 'app-other']) {
     assert.match(WINDOW_MOVE_IN_HTML, new RegExp(`data-move-slide="${other}"`, 'u'))
   }
+  assert.ok(setupHtml.includes('<h1 id="setup-title">How do I connect?</h1>\n      <details class="help-sec" id="claude">'), 'setup: the Claude section follows the heading, no line between')
+  assert.ok(WINDOW_MOVE_IN_HTML.includes('<p><b>Pick your app</b></p>\n      <div class="move-apps"'), 'carousel: the app buttons follow "Pick your app", no line between')
 })

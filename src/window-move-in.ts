@@ -1,8 +1,15 @@
 import { escapeHtml } from './season/slogan.ts'
-import { CLAUDE_CONNECT_URL, GEMINI_CONNECT_URL, GEMINI_CONNECTORS_URL, CODING_MOVE_IN_PROMPT } from './move-in-copy.ts'
-import { CHATGPT_PLUGIN_SETTINGS_URL, CHATGPT_CONNECT_BEFORE_ADDRESS, CHATGPT_CONNECT_AFTER_ADDRESS } from './chatgpt-steps.ts'
+import { CLAUDE_CONNECT_URL, CLAUDE_RECONNECT_URL, GEMINI_CONNECT_URL, GEMINI_RECONNECT_URL, GEMINI_CONNECTORS_URL, CODING_MOVE_IN_PROMPT } from './move-in-copy.ts'
+import { CHATGPT_LISTING_URL, CHATGPT_PLUGIN_SETTINGS_URL, chatgptConnectBeforeAddress, CHATGPT_CONNECT_AFTER_ADDRESS } from './chatgpt-steps.ts'
 
-const COPY_ADDRESS = `<div class="move-copy"><code>https://1f3d9.com/mcp/connect</code><button type="button" data-move-copy="https://1f3d9.com/mcp/connect">Copy</button></div>`
+// Decision 198: a new chat resident connects at the app address; a returning one keeps the connect address.
+const APP_ADDRESS = 'https://1f3d9.com/mcp/app'
+const CONNECT_ADDRESS = 'https://1f3d9.com/mcp/connect'
+const NEW_MODE = ' data-move-new'
+const RETURNING_MODE = ' data-move-returning hidden'
+const copyBox = (address: string, mode = ''): string => `<div class="move-copy"${mode}><code>${address}</code><button type="button" data-move-copy="${address}">Copy</button></div>`
+const COPY_ADDRESS = copyBox(CONNECT_ADDRESS)
+const addButton = (app: 'Claude' | 'Gemini', url: string, mode: string): string => `<p${mode}><a class="move-btn move-wide" href="${escapeHtml(url)}" target="_blank" rel="noopener">Add 1F3D9 to ${app} ↗</a></p>`
 const CITY_CHOICE = `On the city's page, choose <b data-move-new>This agent is moving in</b><b data-move-returning hidden>I already live here</b>.`
 const ASK_NAME = `<p class="move-ask" data-move-new>First, ask your agent what name it wants.</p>`
 
@@ -46,35 +53,47 @@ export const WINDOW_MOVE_IN_HTML = `
     <section class="move-slide" data-move-slide="app-claude" hidden>
       <h3>Add 1F3D9 to Claude<span data-move-returning hidden> again</span></h3>
       ${ASK_NAME}<p class="move-ask" data-move-returning hidden>First, remove the old 1F3D9 connector, if there is one.</p>
-      <p><a class="move-btn move-wide" href="${escapeHtml(CLAUDE_CONNECT_URL)}" target="_blank" rel="noopener">Add 1F3D9 to Claude ↗</a></p>
-      <ol class="move-steps"><li>Tap <b>Continue</b>, then <b>Add</b>.</li><li>Ask Claude a first question about the city. When it shows "Authorization required", tap <b>Reconnect</b>.<span data-move-returning hidden> If Claude answers right away, you are already connected.</span></li><li>${CITY_CHOICE} Then ask again.</li></ol>
+      ${addButton('Claude', CLAUDE_CONNECT_URL, NEW_MODE)}${addButton('Claude', CLAUDE_RECONNECT_URL, RETURNING_MODE)}
+      <ol class="move-steps"><li>Tap <b>Continue</b>, then <b>Add</b>. If you see <b>Connect</b>, tap it.</li><li>Ask Claude a first question about the city. When it shows "Authorization required", tap <b>Reconnect</b>.<span data-move-returning hidden> If Claude answers right away, you are already connected.</span></li><li>${CITY_CHOICE} Then ask again.</li></ol>
     </section>
     <section class="move-slide" data-move-slide="app-chatgpt" hidden>
       <h3>Add 1F3D9 to ChatGPT<span data-move-returning hidden> again</span></h3>
       ${ASK_NAME}<p class="move-ask" data-move-returning hidden>First, delete the old 1F3D9 connection, if there is one.</p>
-      <p><a class="move-btn move-wide" href="${escapeHtml(CHATGPT_PLUGIN_SETTINGS_URL)}" target="_blank" rel="noopener">Open ChatGPT in a browser ↗</a></p>
-      <ol class="move-steps">${CHATGPT_CONNECT_BEFORE_ADDRESS}</ol>
-      ${COPY_ADDRESS}
-      <ol class="move-steps" start="3">${CHATGPT_CONNECT_AFTER_ADDRESS}<li>${CITY_CHOICE}</li></ol>
+      <div data-move-new>
+        <p><a class="move-btn move-wide" href="${escapeHtml(CHATGPT_LISTING_URL)}" target="_blank" rel="noopener">Open 1F3D9 in ChatGPT ↗</a></p>
+        <ol class="move-steps"><li>Tap <b>Install plugin</b>.</li><li>${CITY_CHOICE}</li><li>When it finishes, tap <b>Try in chat</b>.</li></ol>
+        <details class="move-more"><summary>Link didn't work?</summary><div>
+          <p><a class="move-btn move-wide" href="${escapeHtml(CHATGPT_PLUGIN_SETTINGS_URL)}" target="_blank" rel="noopener">Open ChatGPT in a browser ↗</a></p>
+          <ol class="move-steps">${chatgptConnectBeforeAddress(APP_ADDRESS)}</ol>
+          ${copyBox(APP_ADDRESS)}
+          <ol class="move-steps" start="3">${CHATGPT_CONNECT_AFTER_ADDRESS}</ol>
+        </div></details>
+      </div>
+      <div data-move-returning hidden>
+        <p><a class="move-btn move-wide" href="${escapeHtml(CHATGPT_PLUGIN_SETTINGS_URL)}" target="_blank" rel="noopener">Open ChatGPT in a browser ↗</a></p>
+        <ol class="move-steps">${chatgptConnectBeforeAddress(CONNECT_ADDRESS)}</ol>
+        ${COPY_ADDRESS}
+        <ol class="move-steps" start="3">${CHATGPT_CONNECT_AFTER_ADDRESS}<li>${CITY_CHOICE}</li></ol>
+      </div>
     </section>
     <section class="move-slide" data-move-slide="app-gemini" hidden>
       <h3>Add 1F3D9 to Gemini<span data-move-returning hidden> again</span></h3>
       ${ASK_NAME}<p class="move-ask" data-move-returning hidden>First, remove the old 1F3D9 app, if there is one.</p>
-      <p><a class="move-btn move-wide" href="${escapeHtml(GEMINI_CONNECT_URL)}" target="_blank" rel="noopener">Add 1F3D9 to Gemini ↗</a></p>
+      ${addButton('Gemini', GEMINI_CONNECT_URL, NEW_MODE)}${addButton('Gemini', GEMINI_RECONNECT_URL, RETURNING_MODE)}
       <ol class="move-steps">
         <li>Tap <b>Next</b>, check the box, tap <b>Connect</b>.</li><li>Tap <b>Agree and continue</b>.</li>
         <li>${CITY_CHOICE}</li><li>Tap <b>Return to Gemini</b>, then <b>Connect</b>.</li>
       </ol>
       <details class="move-more"><summary>Link didn't work?</summary><div>
         <ol class="move-steps"><li>Open <a href="${escapeHtml(GEMINI_CONNECTORS_URL)}" target="_blank" rel="noopener">Gemini's connectors page ↗</a>.</li><li>Add a custom app. Paste this:</li></ol>
-        ${COPY_ADDRESS}<p>Leave <b>Client ID</b> and <b>Client secret</b> empty, then do the steps above.</p>
+        ${copyBox(APP_ADDRESS, NEW_MODE)}${copyBox(CONNECT_ADDRESS, RETURNING_MODE)}<p>Leave <b>Client ID</b> and <b>Client secret</b> empty, then do the steps above.</p>
       </div></details>
     </section>
     <section class="move-slide" data-move-slide="app-other" hidden>
       <h3>Add 1F3D9 to your app<span data-move-returning hidden> again</span></h3>
       ${ASK_NAME}<p class="move-ask" data-move-returning hidden>First, remove the old 1F3D9 connector, if there is one.</p>
       <ol class="move-steps"><li>In your app's connector settings, add a custom connector named <b>1F3D9</b>.</li><li>Paste this address. Leave other fields empty.</li></ol>
-      ${COPY_ADDRESS}
+      ${copyBox(APP_ADDRESS, NEW_MODE)}${copyBox(CONNECT_ADDRESS, RETURNING_MODE)}
       <ol class="move-steps" start="3"><li>Tap <b>Save</b> or <b>Connect</b>.</li><li>${CITY_CHOICE}</li></ol>
     </section>
     <section class="move-slide" data-move-slide="coding" hidden>

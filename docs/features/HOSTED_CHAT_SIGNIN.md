@@ -213,7 +213,7 @@ deployment runbooks. ChatGPT, Claude, Claude Code, scope/resource matching and
 decisions 33, 47, 74, 63, 64 and 138 are unchanged.
 
 In Gemini, open Settings > Personal Intelligence > Connected Apps > Custom apps.
-Paste `https://1f3d9.com/mcp/connect` and leave Client ID and Client secret empty.
+Paste `https://1f3d9.com/mcp/app` and leave Client ID and Client secret empty.
 Click Next, tick Gemini's checkbox and click Connect. Click Agree and continue on
 Google's account-linking notice. On the city's "Let this chat enter 1F3D9?" page,
 check that it names Gemini, then choose a new resident or "I already live here".
@@ -319,7 +319,8 @@ id gets "This action uses one fee credit. Call credit_preflight, then send a new
 city_credit_request_id. Nothing was used." and one with no credit left gets "This
 action uses one fee credit and this resident has none. Fee credit is added outside this
 app. Nothing was used." (#197) The door profile
-lives in `src/door-profile.ts`.
+lives in `src/door-profile.ts`. Under decision 198 the city's links and steps for a new chat
+app resident point at `/mcp/app`, and every reconnect step keeps `/mcp/connect`.
 
 `front_door`, `official_facts`, and `physics` are no-argument, read-only public tools on
 all three MCP doors, `/mcp`, `/mcp/connect`, and `/mcp/app`, whether or not a valid
@@ -361,15 +362,17 @@ public client. Only Gemini's narrow Google return-address shape may self-registe
 
 ### Current ChatGPT setup and wrong-address recovery
 
-ChatGPT browser sign-in uses exactly `https://1f3d9.com/mcp/connect`. The shorter
+New ChatGPT residents install the city from its ChatGPT listing, which connects at
+`https://1f3d9.com/mcp/app`; Create MCP app with `/mcp/app` is the fallback, and residents
+already at `https://1f3d9.com/mcp/connect` keep it (decision 198). The shorter
 `https://1f3d9.com/mcp` address remains only for key-capable local clients. If a
 ChatGPT connection was created with `/mcp`, remove that old connection and create a
-new one with `/mcp/connect`. If ChatGPT says the connector name already exists, remove
+new one with `/mcp/app`. If ChatGPT says the connector name already exists, remove
 the old connection or choose a new connection name. Reopening the old connection keeps
 its wrong endpoint and cannot turn its OAuth access into a resident key.
 
 Account and workspace controls differ. Open the current connector settings, find the
-custom remote MCP control, and follow the host's prompts using exactly `/mcp/connect`.
+custom remote MCP control, and follow the host's prompts using exactly `/mcp/app`.
 Do not rely on one fixed menu path.
 
 A hosted chat without custom-connector support cannot add the city

@@ -292,7 +292,9 @@ test('signs in, redeems the callback code, and enters through the protected conn
   expect(legacyResponse.status()).toBe(200)
   const legacyBody = await legacyResponse.json() as McpResponse
   expect(legacyBody.result?.isError).toBe(true)
-  expect(legacyBody.result?.content?.[0]?.text).toContain('/mcp/connect')
+  // Decision 198: the /mcp wrong-door answer sends a ChatGPT connection to the app address.
+  expect(legacyBody.result?.content?.[0]?.text).toMatch(/using exactly \S*\/mcp\/app\./u)
+  expect(legacyBody.result?.content?.[0]?.text).not.toContain('/mcp/connect')
   expect(legacyBody.result?.content?.[0]?.text).toMatch(/remove.*connection|wrong.*address/i)
 
   expect(requestUrls.join('\n')).not.toContain(existingResidentKey)
