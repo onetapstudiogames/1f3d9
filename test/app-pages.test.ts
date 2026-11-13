@@ -172,15 +172,78 @@ test('pages without the app marker, and paths it does not cover, stay byte for b
   const plain = new Hono()
   mountHumanPages(plain)
   plain.get('/window', c => windowPage(c, true))
-  for (const path of ['/about', '/window', '/market', '/market?from=app', '/setup?from=app']) {
-    const served = await (await withMarker.request(path)).text()
-    assert.equal(served, await (await plain.request(path)).text(), path)
+  for (const path of ['/about', '/window', '/market', '/market?from=app', '/setup', '/setup.js?from=app']) {
+    const served = await withMarker.request(path)
+    const expected = await plain.request(path)
+    assert.equal(await served.text(), await expected.text(), path)
+    assert.deepEqual([...served.headers], [...expected.headers], path)
   }
   const about = await (await withMarker.request('/about')).text()
   assert.match(about, /Visit the market/u)
   assert.match(about, /We also run 1F3EA, the market next door\./u)
   assert.match(about, /<a href="\/market">Market<\/a>/u)
   assert.match(await (await withMarker.request('/window')).text(), /Agents live here; we also run the market next door\./u)
+})
+
+const SETUP_MARKET_NAV_ITEM = /\n\s*<a href="\/market">Market<\/a>/u
+const SETUP_HELP_SECTION = /<details class="help-sec"[\s\S]*?<\/details>/gu
+
+test('the setup page opened from the app drops only the header Market item, keeps every help section, and is not cached', async () => {
+  for (const hostedChatSigninReady of [true, false]) {
+    const withMarker = new Hono()
+    withMarker.use('*', appPagePurchaseLinks)
+    mountHumanPages(withMarker, { hostedChatSigninReady: () => hostedChatSigninReady })
+    const plain = new Hono()
+    mountHumanPages(plain, { hostedChatSigninReady: () => hostedChatSigninReady })
+    const label = `hosted chat sign-in ${hostedChatSigninReady ? 'ready' : 'unavailable'}`
+    const normal = await (await plain.request('/setup')).text()
+    assert.match(normal, SETUP_MARKET_NAV_ITEM, label)
+    const embedded = await withMarker.request('/setup?from=app')
+    assert.equal(embedded.status, 200, label)
+    assert.equal(embedded.headers.get('cache-control'), 'no-store', label)
+    const page = await embedded.text()
+    assert.equal(page, normal.replace(SETUP_MARKET_NAV_ITEM, ''), label)
+    assert.doesNotMatch(page, MARKET_HREF, label)
+    assert.doesNotMatch(page, /<nav class="guide-nav"[^>]*>[\s\S]*?>Market<\/a>[\s\S]*?<\/nav>/u, label)
+    const sections = normal.match(SETUP_HELP_SECTION) ?? []
+    assert.ok(sections.some(section => section.includes('id="weekly-payment"')), label)
+    assert.ok(sections.some(section => section.includes('id="retirement"')), label)
+    for (const section of sections) assert.ok(page.includes(section), `${label}: ${section.slice(0, 60)}`)
+  }
+})
+
+// Anyone who adds market or payment content to these pages must cover them first.
+const IDENTITY_PAGE_FORBIDDEN = [
+  MARKET_HREF,
+  />Market<\/a>/u,
+  /1f3ea\.com/iu,
+  /href=["'](?:https:\/\/1f3d9\.com)?\/buy(?:[?#][^"']*)?["']/iu,
+  /paypal\.com/iu,
+] as const
+
+test('the join, recovery and rotate pages carry nothing the app marker removes, so they stay uncovered', async () => {
+  const { memoryStore } = await import('./helpers/identity-browser-fixtures/memory-store.ts')
+  const { mountIdentityRoutes } = await import('../src/identity-browser.ts')
+  for (const hostedChatSigninReady of [true, false]) {
+    const app = new Hono()
+    mountIdentityRoutes(app, {
+      environment: {
+        PUBLIC_ORIGIN: 'https://1f3d9.com',
+        VERCEL: '1',
+        IDENTITY_RECOVERY_ENABLED: 'true',
+        IDENTITY_ROTATION_ENABLED: 'true',
+      },
+      store: memoryStore().store,
+      hostedChatSigninReady,
+    })
+    for (const path of ['/join', '/join?new=1', '/recovery', '/rotate']) {
+      const label = `${path} with hosted chat sign-in ${hostedChatSigninReady ? 'ready' : 'unavailable'}`
+      const response = await app.request(path, { headers: { accept: 'text/html' } })
+      assert.equal(response.status, 200, label)
+      const page = await response.text()
+      for (const pattern of IDENTITY_PAGE_FORBIDDEN) assert.doesNotMatch(page, pattern, label)
+    }
+  }
 })
 
 test('the architecture doc states the decision 191 app rule no wider than the code', async () => {

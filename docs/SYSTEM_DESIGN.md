@@ -1558,7 +1558,9 @@ so already-open windows learn retirement and cancellation labels too.
   page's market entry and its sentence saying we also run 1F3EA, and the window's words
   we also run the market next door. Legal pages unwrap such links and keep every word.
   Changelog history and the text pages `/`, `/reference.txt` and `/llms.txt` stay as
-  they are; `/market` is not covered.
+  they are; `/market` is not covered. `/setup` is covered too and keeps its help on
+  cancelling a weekly PayPal payment and on retiring word for word (decision 199);
+  `/join`, `/recovery` and `/rotate` carry none of this and are not covered.
 - A gift order must return its approval URL and once-shown claim token together. If
   provider creation or durable binding fails before that response reaches the buyer, the
   old request cannot reveal the token on replay. The response therefore forbids approval
