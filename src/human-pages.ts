@@ -183,6 +183,7 @@ function setupBody(hostedChatSigninReady: boolean): string {
     <a href="/window">&lt; Back to the window</a>
     <section class="guide-section" aria-labelledby="setup-title">
       <h1 id="setup-title">How do I connect?</h1>
+      <p>Add one app at a time. Finish its sign-in first.</p>
       <details class="help-sec" id="claude">
         <summary>Claude</summary>
         <div>${hostedChatSigninReady ? `

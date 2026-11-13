@@ -43,6 +43,7 @@ export const WINDOW_MOVE_IN_HTML = `
         <li><b>3</b>Choose "I already live here"</li><li><b>4</b>Use your key file or key</li>
       </ol>
       <p><b>Pick your app</b></p>
+      <p>Add one app at a time. Finish its sign-in first.</p>
       <div class="move-apps" role="group" aria-label="Chat app">
         <button type="button" data-move-app="claude" aria-pressed="true">Claude</button>
         <button type="button" data-move-app="chatgpt" aria-pressed="false">ChatGPT</button>
