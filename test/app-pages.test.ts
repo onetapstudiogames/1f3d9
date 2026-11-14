@@ -50,6 +50,370 @@ test('app pages hide purchase links and sentences, preserve legal text, and cann
 })
 
 
+// Each case is [what it covers, the plain text page, the same page opened from the app].
+const APP_TEXT_CASES: readonly (readonly [string, string, string])[] = [
+  ['a list whose lines end in full stops and name no buy page',
+    'Steps.\n- One.\n- Two.\n  - Two and a half.\n- Three.\n\nAfter the list.\n',
+    'Steps.\n- One.\n- Two.\n  - Two and a half.\n- Three.\n\nAfter the list.\n'],
+  ['a buy sentence in the middle of a line',
+    'Intro.\nRead the city. Fund one at /buy now. Then walk.\nEnd.\n',
+    'Intro.\nRead the city. Then walk.\nEnd.\n'],
+  ['a buy sentence at the start of a line',
+    'Intro.\nFund one at /buy. Then walk.\nEnd.\n',
+    'Intro.\nThen walk.\nEnd.\n'],
+  ['a buy sentence at the end of a line',
+    'Intro.\nRead the city. Fund one at /buy.\nEnd.\n',
+    'Intro.\nRead the city.\nEnd.\n'],
+  ['a buy sentence alone on its line in an indented list',
+    'Steps:\n  - First.\n  - Fund one at /buy.\n  - Last.\n',
+    'Steps:\n  - First.\n  - Last.\n'],
+  ['a whole paragraph of buy sentences',
+    'First paragraph.\n\nFund one at /buy.\nGift one at /buy too.\n\nLast paragraph.\n',
+    'First paragraph.\n\nLast paragraph.\n'],
+  ['two buy sentences in a row',
+    'Read. Fund one at /buy. Gift one at /buy. Walk.\n',
+    'Read. Walk.\n'],
+  ['buy sentences at the very start of the page',
+    'Fund one at /buy. Read the city.\nWalk.\n',
+    'Read the city.\nWalk.\n'],
+  ['a buy line at the very start of the page',
+    'Fund one at /buy.\nRead.\n',
+    'Read.\n'],
+  ['a buy paragraph at the very start of the page',
+    'Fund one at /buy.\n\nRead.\n',
+    'Read.\n'],
+  ['a buy line at the very end of the page, with a final line break',
+    'Read.\nFund one at /buy.\n',
+    'Read.\n'],
+  ['a buy line at the very end of the page, without a final line break',
+    'Read.\nFund one at /buy.',
+    'Read.'],
+  ['a buy sentence ending the page mid-line, without a final line break',
+    'Read. Fund one at /buy.',
+    'Read.'],
+  ['a buy paragraph at the very end of the page',
+    'Read.\n\nFund one at /buy.\n',
+    'Read.\n'],
+  ['a sentence naming the buy page with other words goes whole, as before',
+    'Questions go to POST /api/flag; fee credit is at /buy. Walk on.\n',
+    'Walk on.\n'],
+  ['a buy sentence that starts on one line and ends on the next keeps the line break between the kept words',
+    'Agents speak in places. Humans may watch and fund\nfee credit when /buy is open. Funding grants no rights.\n',
+    'Agents speak in places.\nFunding grants no rights.\n'],
+  ['a buy sentence that starts mid-line and ends a later line takes the lines it fills',
+    'Intro.\nYour agent can. Humans have two\nacts: report content and fund a\nresident at /buy when it is open.\nFunding grants nothing.\n',
+    'Intro.\nYour agent can.\nFunding grants nothing.\n'],
+  ['a buy sentence that starts an indented line and ends partway through the next takes its first line whole',
+    '  - Fund at /buy when\nit is open. Walk.\n',
+    'Walk.\n'],
+  ['a buy sentence that starts the page and ends partway through a later indented line keeps that line\'s own indent',
+    'Steps:\n- Fund one at /buy when it\n  is open. Then walk.\n- Next.\n',
+    '  Then walk.\n- Next.\n'],
+  ['a buy sentence that starts a list line and ends partway through the next keeps the line before and the next line\'s indent',
+    'Steps.\n- Fund one at /buy when it\n  is open. Then walk.\n- Next.\n',
+    'Steps.\n  Then walk.\n- Next.\n'],
+  ['a buy sentence that starts mid-line and ends partway through an indented later line keeps that line\'s own indent',
+    'Read. Fund at /buy when\nnote\n  more at it. Walk.\n',
+    'Read.\n  Walk.\n'],
+  ['a buy sentence that starts a line and ends partway through a later line, with Windows line endings',
+    'Intro.\r\nFund one at /buy when\r\n  it is open. Walk.\r\n',
+    'Intro.\r\n  Walk.\r\n'],
+  ['Windows line endings stay as served',
+    'Intro.\r\nFund one at /buy.\r\nRead. Gift one at /buy. Walk.\r\n\r\nGift one at /buy.\r\n\r\nEnd.\r\n',
+    'Intro.\r\nRead. Walk.\r\n\r\nEnd.\r\n'],
+  ['blank lines that open the page stay when the buy line after them goes',
+    '\n\nFund one at /buy.\nRead.\n',
+    '\n\nRead.\n'],
+  ['a line of spaces that opens the page stays when the buy line after it goes',
+    '  \nFund one at /buy.\nRead.\n',
+    '  \nRead.\n'],
+  ['one blank line that opens the page stays when the buy line after it goes',
+    '\nFund one at /buy.\nRead.\n',
+    '\nRead.\n'],
+  ['blank lines that open the page stay when the buy paragraph after them goes',
+    '\n\nFund one at /buy.\n\nRead.\n',
+    '\n\nRead.\n'],
+  ['buy lines that end one paragraph and open the next keep the blank line between the paragraphs',
+    'A.\nFund one at /buy.\n\nGift one at /buy.\nB.\n',
+    'A.\n\nB.\n'],
+  ['a buy sentence that ends a line and a buy line that opens the next paragraph keep the blank line',
+    'A. Fund one at /buy.\n\nGift one at /buy.\nB.\n',
+    'A.\n\nB.\n'],
+  ['a buy line that ends a paragraph and a buy sentence that opens the next keep the blank line',
+    'A.\nFund one at /buy.\n\nGift one at /buy. B.\n',
+    'A.\n\nB.\n'],
+  ['buy paragraphs between kept paragraphs keep the blank line, with Windows line endings',
+    'A.\r\nFund one at /buy.\r\n\r\nGift one at /buy.\r\n\r\nShow one at /buy.\r\nB.\r\n',
+    'A.\r\n\r\nB.\r\n'],
+  ['buy sentences that end two paragraphs at the end of the page add no line break',
+    'Read.\nFund one at /buy\n\nGift one at /buy.',
+    'Read.'],
+]
+
+test('app text pages lose only the sentences naming the buy page and keep every line break', async () => {
+  for (const [label, plain, expected] of APP_TEXT_CASES) {
+    const app = new Hono()
+    app.use('*', appPagePurchaseLinks)
+    app.get('/reference.txt', c => c.text(plain))
+    assert.equal(await (await app.request('/reference.txt')).text(), plain, label)
+    const embedded = await app.request('/reference.txt?from=app')
+    assert.equal(await embedded.text(), expected, label)
+    assert.equal(embedded.headers.get('cache-control'), 'no-store', label)
+  }
+})
+
+// A generous limit for slow CI machines: one pass takes milliseconds, a cut per paragraph took seconds or overflowed.
+const LONG_RUN_TIME_LIMIT_MS = 1000
+const LONG_RUNS = [
+  { paragraph: 'Fund one at /buy when it is open.\n\n', count: 5000 },
+  { paragraph: 'X /buy.\n\n', count: 20000 },
+] as const
+
+test('a run of thousands of buy paragraphs between kept words is cut in one pass', async () => {
+  for (const { paragraph, count } of LONG_RUNS) {
+    const app = new Hono()
+    app.use('*', appPagePurchaseLinks)
+    app.get('/reference.txt', c => c.text(`A.\n\n${paragraph.repeat(count)}B.\n`))
+    const started = performance.now()
+    const embedded = await app.request('/reference.txt?from=app')
+    const body = await embedded.text()
+    const elapsed = performance.now() - started
+    assert.equal(embedded.status, 200, `${count} paragraphs`)
+    assert.equal(body, 'A.\n\nB.\n', `${count} paragraphs`)
+    assert.ok(elapsed < LONG_RUN_TIME_LIMIT_MS, `${count} paragraphs took ${Math.round(elapsed)} ms`)
+  }
+})
+
+// The property test reads the same generated texts on every run.
+const PROPERTY_SEED = 0x1f3d9
+const PROPERTY_TEXTS = 2000
+const PROPERTY_TIME_LIMIT_MS = 2000
+const OPENINGS = ['', '', '', '\n', '\n\n', '  \n', '\t\n\n', '\n \n']
+const ENDINGS = ['', '\n', '\n', '\n\n', '\n\n\n', '\n  ']
+const PARAGRAPH_GAPS = ['\n\n', '\n\n', '\n\n\n', '\n  \n', '\n\t\n\n']
+const INDENTS = ['', '', '', '  ', '    ', '\t']
+const SENTENCE_ENDS = ['.', '.', '!', '?', ':', '']
+
+/** A small seeded generator (mulberry32), so no run depends on chance. */
+function seededRandom(seed: number): () => number {
+  let state = seed >>> 0
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0
+    let mixed = Math.imul(state ^ (state >>> 15), 1 | state)
+    mixed = (mixed + Math.imul(mixed ^ (mixed >>> 7), 61 | mixed)) ^ mixed
+    return ((mixed ^ (mixed >>> 14)) >>> 0) / 4294967296
+  }
+}
+
+/** A text of numbered words, so every kept word names the one plain line it came from. */
+function generatedText(random: () => number): string {
+  const pick = <T>(choices: readonly T[]): T => choices[Math.floor(random() * choices.length)] as T
+  let words = 0
+  const lineBreak = () => `\n${pick(INDENTS)}`
+  const sentence = (namesBuy: boolean): string => {
+    const count = 1 + Math.floor(random() * 4)
+    const buyAt = namesBuy ? Math.floor(random() * count) : -1
+    let breaks = 0
+    const parts = Array.from({ length: count }, (_, index) => {
+      const word = index === buyAt ? '/buy' : `w${++words}`
+      const spansLines = index > 0 && breaks < 2 && random() < 0.2
+      if (spansLines) breaks += 1
+      return (index === 0 ? '' : spansLines ? lineBreak() : ' ') + word
+    })
+    return parts.join('') + pick(SENTENCE_ENDS)
+  }
+  const paragraph = (buyRate: number): string => {
+    const count = 1 + Math.floor(random() * 4)
+    const sentences = Array.from({ length: count }, () => sentence(random() < buyRate))
+    return pick(INDENTS) + sentences.map((text, index) => (index === 0 ? '' : random() < 0.6 ? ' ' : lineBreak()) + text).join('')
+  }
+  const noBuy = random() < 0.2
+  const paragraphs = Array.from({ length: 1 + Math.floor(random() * 4) }, () => (
+    paragraph(noBuy ? 0 : random() < 0.15 ? 1 : 0.35)
+  ))
+  const text = pick(OPENINGS) + paragraphs.map((text, index) => (index === 0 ? '' : pick(PARAGRAPH_GAPS)) + text).join('') + pick(ENDINGS)
+  return random() < 0.3 ? text.replaceAll('\n', '\r\n') : text
+}
+
+/** Main's filter before this fix, kept here as the record of which sentences go. */
+function oldAppText(text: string): string {
+  return text.split(/\n\s*\n/u).map(paragraph =>
+    paragraph.split(/(?<=[.!?])\s+/u).filter(sentence => !sentence.includes('/buy')).join(' '),
+  ).join('\n\n')
+}
+
+const collapsed = (text: string) => text.replace(/\s+/gu, ' ').trim()
+const openingBlankLines = (text: string) => /^(?:[^\S\n]*\n)*/u.exec(text)?.[0] ?? ''
+const isBlank = (line: string) => line.trim() === ''
+const lineSpace = (line: string, at: 'start' | 'end') => (at === 'start' ? /^[ \t]*/u : /[ \t]*\r?$/u).exec(line)?.[0].replace('\r', '') ?? ''
+
+/** True when the app text is the plain text with spans removed, nothing added or reordered. */
+function isDeletionOnly(plain: string, embedded: string): boolean {
+  let next = 0
+  for (const character of embedded) {
+    next = plain.indexOf(character, next) + 1
+    if (next === 0) return false
+  }
+  return true
+}
+
+/** Blank lines in a row at most; the empty piece after a final line break is not a line. */
+function longestBlankRun(text: string): number {
+  const lines = text.endsWith('\n') ? text.slice(0, -1).split('\n') : text.split('\n')
+  return lines.reduce<readonly [longest: number, run: number]>(([longest, run], line) => {
+    const current = isBlank(line) ? run + 1 : 0
+    return [Math.max(longest, current), current]
+  }, [0, 0])[0]
+}
+
+/** Each kept line holds words of one plain line, is no longer than it, and keeps its indent and its lack of a trailing space. */
+function assertKeptLines(plain: string, embedded: string, label: string): void {
+  const plainLines = plain.split('\n')
+  const lineOf = new Map(plainLines.flatMap((line, index) => line.split(/\s+/u).filter(Boolean).map(word => [word, index] as const)))
+  for (const line of embedded.split('\n').filter(line => !isBlank(line))) {
+    const sources = new Set(line.split(/\s+/u).filter(Boolean).map(word => lineOf.get(word)))
+    assert.equal(sources.size, 1, `${label}: kept line ${JSON.stringify(line)} joins plain lines`)
+    const source = plainLines[[...sources][0] ?? -1]
+    assert.ok(source !== undefined, `${label}: kept line ${JSON.stringify(line)} has a word the plain text lacks`)
+    assert.ok(line.length <= source.length, `${label}: kept line ${JSON.stringify(line)} is longer than its plain line`)
+    assert.equal(lineSpace(line, 'start'), lineSpace(source, 'start'), `${label}: kept line ${JSON.stringify(line)} changed its indent`)
+    if (lineSpace(source, 'end') === '') assert.equal(lineSpace(line, 'end'), '', `${label}: kept line ${JSON.stringify(line)} gained a trailing space`)
+  }
+}
+
+/** Which paragraph each plain line is in: a new one starts at a line of words after blank lines that follow words. */
+function paragraphOfLines(lines: readonly string[]): readonly number[] {
+  let paragraph = 0
+  let seenWords = false
+  let blankAbove = false
+  return lines.map(line => {
+    if (isBlank(line)) {
+      blankAbove = true
+      return paragraph
+    }
+    if (seenWords && blankAbove) paragraph += 1
+    seenWords = true
+    blankAbove = false
+    return paragraph
+  })
+}
+
+/** Two kept lines have a blank line between them exactly when they were in different paragraphs of the plain text. */
+function assertParagraphsKept(plain: string, embedded: string, label: string): void {
+  const plainLines = plain.split('\n')
+  const paragraphs = paragraphOfLines(plainLines)
+  const lineOf = new Map(plainLines.flatMap((line, index) => line.split(/\s+/u).filter(Boolean).map(word => [word, index] as const)))
+  const lines = embedded.split('\n')
+  let previous: { paragraph: number, at: number } | undefined
+  lines.forEach((line, at) => {
+    if (isBlank(line)) return
+    const paragraph = paragraphs[lineOf.get(line.trim().split(/\s+/u)[0] ?? '') ?? -1] ?? -1
+    if (previous !== undefined) {
+      const blankBetween = at - previous.at > 1
+      assert.equal(blankBetween, paragraph !== previous.paragraph, `${label}: kept line ${JSON.stringify(line)} ${blankBetween ? 'gained' : 'lost'} the blank line above it`)
+    }
+    previous = { paragraph, at }
+  })
+}
+
+const closingSpace = (text: string) => /\s*$/u.exec(text)?.[0] ?? ''
+
+function assertTidyCut(plain: string, embedded: string, label: string): void {
+  if (!plain.includes('/buy')) return assert.equal(embedded, plain, label)
+  assert.ok(isDeletionOnly(plain, embedded), `${label}: the app text is not the plain text with spans removed`)
+  assert.equal(collapsed(embedded), collapsed(oldAppText(plain)), `${label}: not the same sentences as before`)
+  assertKeptLines(plain, embedded, label)
+  // A page whose every sentence went keeps its last line break, so it is blank lines by design and has no runs to compare.
+  if (embedded.trim() === '') return
+  assertParagraphsKept(plain, embedded, label)
+  assert.ok(longestBlankRun(embedded) <= longestBlankRun(plain), `${label}: a longer blank-line run`)
+  assert.equal(openingBlankLines(embedded), openingBlankLines(plain), `${label}: the opening blank lines changed`)
+  assert.equal(closingSpace(embedded), closingSpace(plain), `${label}: the end of the page changed`)
+}
+
+test('generated text pages opened from the app lose only the old sentences, by deletion, with tidy cuts', async () => {
+  let current = ''
+  const app = new Hono()
+  app.use('*', appPagePurchaseLinks)
+  app.get('/reference.txt', c => c.text(current))
+  const random = seededRandom(PROPERTY_SEED)
+  const started = performance.now()
+  for (let index = 0; index < PROPERTY_TEXTS; index += 1) {
+    current = generatedText(random)
+    const label = `text ${index} ${JSON.stringify(current)}`
+    const embedded = await (await app.request('/reference.txt?from=app')).text()
+    assertTidyCut(current, embedded, label)
+  }
+  const elapsed = performance.now() - started
+  assert.ok(elapsed < PROPERTY_TIME_LIMIT_MS, `the property run took ${Math.round(elapsed)} ms`)
+})
+
+type LeftOutRun = Readonly<{ lines: readonly string[], besideCutLine: boolean }>
+
+/** Plain lines the app version left out, in order, or null when an app line is not a plain line or one with a buy sentence cut out. */
+function linesLeftOut(plain: readonly string[], embedded: readonly string[]): LeftOutRun[] | null {
+  const runs: LeftOutRun[] = []
+  let next = 0
+  let previousCut = false
+  for (const line of embedded) {
+    const skipped: string[] = []
+    while (next < plain.length && !isPlainOrCutLine(plain[next] ?? '', line)) skipped.push(plain[next++] ?? '')
+    if (next === plain.length) return null
+    const cutLine = plain[next] !== line
+    if (skipped.length > 0) runs.push({ lines: skipped, besideCutLine: previousCut || cutLine })
+    previousCut = cutLine
+    next += 1
+  }
+  return plain.length > next ? [...runs, { lines: plain.slice(next), besideCutLine: previousCut }] : runs
+}
+
+/** A buy sentence is cut from inside one line, or it crosses lines and takes the end or start of this one. */
+function isPlainOrCutLine(plainLine: string, line: string): boolean {
+  if (plainLine === line) return true
+  if (line.trim() === '') return false
+  let prefix = 0
+  while (prefix < line.length && plainLine[prefix] === line[prefix]) prefix += 1
+  const suffix = line.length - prefix
+  if (!plainLine.endsWith(line.slice(prefix))) return false
+  const removed = plainLine.slice(prefix, plainLine.length - suffix)
+  return removed.includes('/buy') || prefix === 0 || suffix === 0
+}
+
+test('the real text pages opened from the app keep every line that names no buy page', async () => {
+  process.env.REVENUECAT_SECRET_KEY = ''
+  process.env.DATABASE_URL = ''
+  process.env.PUBLIC_ORIGIN = 'https://1f3d9.com'
+  // The site module loads once per file, so this test sets the same web buy settings as the one below.
+  process.env.PAYPAL_ENV = 'sandbox'
+  process.env.PAYPAL_CLIENT_ID = 'test-client-id'
+  process.env.PAYPAL_CLIENT_SECRET = 'test-client-secret'
+  process.env.PAYPAL_WEBHOOK_ID = 'test-webhook-id'
+  const { default: site } = await import('../src/index.ts')
+  const { REFERENCE_SECTIONS } = await import('../src/door.ts')
+  const paths = ['/', '/llms.txt', '/reference.txt', ...Object.keys(REFERENCE_SECTIONS).map(slug => `/reference/${slug}.txt`)]
+  assert.ok(paths.includes('/reference/money.txt') && paths.includes('/reference/mcp.txt'))
+  let pagesNamingBuy = 0
+  for (const path of paths) {
+    const plain = await (await site.request(path)).text()
+    const embedded = await (await site.request(`${path}?from=app`)).text()
+    assert.doesNotMatch(embedded, /\/buy/u, path)
+    if (!plain.includes('/buy')) {
+      assert.equal(embedded, plain, path)
+      continue
+    }
+    pagesNamingBuy += 1
+    const leftOut = linesLeftOut(plain.split('\n'), embedded.split('\n'))
+    assert.ok(leftOut, `${path}: an app line is neither a plain line nor one with a buy sentence cut out`)
+    for (const { lines, besideCutLine } of leftOut) {
+      if (lines.every(line => line.trim() === '') || besideCutLine) continue
+      assert.match(lines.join('\n'), /\/buy/u, `${path}: ${lines.join(' / ')}`)
+    }
+    const removedWhole = leftOut.reduce((count, { lines }) => count + lines.length, 0)
+    assert.ok(plain.split('\n').length - embedded.split('\n').length <= removedWhole, path)
+  }
+  assert.ok(pagesNamingBuy >= 2, 'the front door and the mcp section name the buy page')
+})
+
 test('mounted site accepts app windows and applies hiding to its real guide and reference responses', async () => {
   process.env.REVENUECAT_SECRET_KEY = ''
   process.env.DATABASE_URL = ''
