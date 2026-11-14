@@ -133,6 +133,21 @@ const APP_TEXT_CASES: readonly (readonly [string, string, string])[] = [
   ['blank lines that open the page stay when the buy paragraph after them goes',
     '\n\nFund one at /buy.\n\nRead.\n',
     '\n\nRead.\n'],
+  ['buy lines that end one paragraph and open the next keep the blank line between the paragraphs',
+    'A.\nFund one at /buy.\n\nGift one at /buy.\nB.\n',
+    'A.\n\nB.\n'],
+  ['a buy sentence that ends a line and a buy line that opens the next paragraph keep the blank line',
+    'A. Fund one at /buy.\n\nGift one at /buy.\nB.\n',
+    'A.\n\nB.\n'],
+  ['a buy line that ends a paragraph and a buy sentence that opens the next keep the blank line',
+    'A.\nFund one at /buy.\n\nGift one at /buy. B.\n',
+    'A.\n\nB.\n'],
+  ['buy paragraphs between kept paragraphs keep the blank line, with Windows line endings',
+    'A.\r\nFund one at /buy.\r\n\r\nGift one at /buy.\r\n\r\nShow one at /buy.\r\nB.\r\n',
+    'A.\r\n\r\nB.\r\n'],
+  ['buy sentences that end two paragraphs at the end of the page add no line break',
+    'Read.\nFund one at /buy\n\nGift one at /buy.',
+    'Read.'],
 ]
 
 test('app text pages lose only the sentences naming the buy page and keep every line break', async () => {
@@ -244,6 +259,43 @@ function assertKeptLines(plain: string, embedded: string, label: string): void {
   }
 }
 
+/** Which paragraph each plain line is in: a new one starts at a line of words after blank lines that follow words. */
+function paragraphOfLines(lines: readonly string[]): readonly number[] {
+  let paragraph = 0
+  let seenWords = false
+  let blankAbove = false
+  return lines.map(line => {
+    if (isBlank(line)) {
+      blankAbove = true
+      return paragraph
+    }
+    if (seenWords && blankAbove) paragraph += 1
+    seenWords = true
+    blankAbove = false
+    return paragraph
+  })
+}
+
+/** Two kept lines have a blank line between them exactly when they were in different paragraphs of the plain text. */
+function assertParagraphsKept(plain: string, embedded: string, label: string): void {
+  const plainLines = plain.split('\n')
+  const paragraphs = paragraphOfLines(plainLines)
+  const lineOf = new Map(plainLines.flatMap((line, index) => line.split(/\s+/u).filter(Boolean).map(word => [word, index] as const)))
+  const lines = embedded.split('\n')
+  let previous: { paragraph: number, at: number } | undefined
+  lines.forEach((line, at) => {
+    if (isBlank(line)) return
+    const paragraph = paragraphs[lineOf.get(line.trim().split(/\s+/u)[0] ?? '') ?? -1] ?? -1
+    if (previous !== undefined) {
+      const blankBetween = at - previous.at > 1
+      assert.equal(blankBetween, paragraph !== previous.paragraph, `${label}: kept line ${JSON.stringify(line)} ${blankBetween ? 'gained' : 'lost'} the blank line above it`)
+    }
+    previous = { paragraph, at }
+  })
+}
+
+const closingSpace = (text: string) => /\s*$/u.exec(text)?.[0] ?? ''
+
 function assertTidyCut(plain: string, embedded: string, label: string): void {
   if (!plain.includes('/buy')) return assert.equal(embedded, plain, label)
   assert.ok(isDeletionOnly(plain, embedded), `${label}: the app text is not the plain text with spans removed`)
@@ -251,8 +303,10 @@ function assertTidyCut(plain: string, embedded: string, label: string): void {
   assertKeptLines(plain, embedded, label)
   // A page whose every sentence went keeps its last line break, so it is blank lines by design and has no runs to compare.
   if (embedded.trim() === '') return
+  assertParagraphsKept(plain, embedded, label)
   assert.ok(longestBlankRun(embedded) <= longestBlankRun(plain), `${label}: a longer blank-line run`)
   assert.equal(openingBlankLines(embedded), openingBlankLines(plain), `${label}: the opening blank lines changed`)
+  assert.equal(closingSpace(embedded), closingSpace(plain), `${label}: the end of the page changed`)
 }
 
 test('generated text pages opened from the app lose only the old sentences, by deletion, with tidy cuts', async () => {
