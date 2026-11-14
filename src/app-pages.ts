@@ -111,12 +111,18 @@ function withoutBuySentences(text: string): string {
     const startsLine = before === 0 || leading.includes('\n')
     const endsLine = after === text.length || trailing.includes('\n')
     const toLineEnd = last + (LINE_SPACE.exec(trailing)?.[0].length ?? 0)
-    // Kept words before and after a run that crosses lines: keep its widest line break between them.
-    const lineBreak = [...text.slice(first, last).matchAll(INNER_LINE_BREAK)]
-      .sort((one, other) => newlines(other[0]) - newlines(one[0]))[0]
-    if (!startsLine && !endsLine && lineBreak !== undefined) {
-      const breakStart = first + lineBreak.index
-      return [[before, breakStart], [breakStart + lineBreak[0].length, after]]
+    const lineBreaks = [...text.slice(first, last).matchAll(INNER_LINE_BREAK)]
+    const lastBreak = lineBreaks.at(-1)
+    // A run that ends inside a later line: the words kept after it keep that line's own indent.
+    if (!endsLine && lastBreak !== undefined) {
+      const lastLine = first + lastBreak.index + lastBreak[0].length
+      const indentStart = first + lastBreak.index + lastBreak[0].lastIndexOf('\n') + 1
+      // From the start of a line: drop the lines the run fills whole.
+      if (startsLine) return [[before + leading.lastIndexOf('\n') + 1, indentStart], [lastLine, after]]
+      // Kept words on both sides: keep the run's widest line break between them.
+      const widest = [...lineBreaks].sort((one, other) => newlines(other[0]) - newlines(one[0]))[0] ?? lastBreak
+      const breakStart = first + widest.index
+      return [[before, breakStart], [breakStart + widest[0].lastIndexOf('\n') + 1, indentStart], [lastLine, after]]
     }
     // Kept words share the line: drop the run and the spaces on one side of it.
     if (!endsLine) return [[first, after]]
