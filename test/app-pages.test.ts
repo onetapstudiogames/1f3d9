@@ -162,6 +162,28 @@ test('app text pages lose only the sentences naming the buy page and keep every 
   }
 })
 
+// A generous limit for slow CI machines: one pass takes milliseconds, a cut per paragraph took seconds or overflowed.
+const LONG_RUN_TIME_LIMIT_MS = 1000
+const LONG_RUNS = [
+  { paragraph: 'Fund one at /buy when it is open.\n\n', count: 5000 },
+  { paragraph: 'X /buy.\n\n', count: 20000 },
+] as const
+
+test('a run of thousands of buy paragraphs between kept words is cut in one pass', async () => {
+  for (const { paragraph, count } of LONG_RUNS) {
+    const app = new Hono()
+    app.use('*', appPagePurchaseLinks)
+    app.get('/reference.txt', c => c.text(`A.\n\n${paragraph.repeat(count)}B.\n`))
+    const started = performance.now()
+    const embedded = await app.request('/reference.txt?from=app')
+    const body = await embedded.text()
+    const elapsed = performance.now() - started
+    assert.equal(embedded.status, 200, `${count} paragraphs`)
+    assert.equal(body, 'A.\n\nB.\n', `${count} paragraphs`)
+    assert.ok(elapsed < LONG_RUN_TIME_LIMIT_MS, `${count} paragraphs took ${Math.round(elapsed)} ms`)
+  }
+})
+
 // The property test reads the same generated texts on every run.
 const PROPERTY_SEED = 0x1f3d9
 const PROPERTY_TEXTS = 2000

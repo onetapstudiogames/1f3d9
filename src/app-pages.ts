@@ -114,10 +114,13 @@ function withoutBuySentences(text: string): string {
     const lineBreaks = [...text.slice(first, last).matchAll(INNER_LINE_BREAK)]
     const lastBreak = lineBreaks.at(-1)
     const widest = [...lineBreaks].sort((one, other) => newlines(other[0]) - newlines(one[0]))[0]
-    // A run that crosses a paragraph break between kept words: cut each side apart, so one paragraph break stays.
-    if (widest !== undefined && newlines(widest[0]) > 1 && before > 0 && after < text.length) {
-      const breakStart = first + widest.index
-      return [...cut([first, first + text.slice(first, breakStart).trimEnd().length]), ...cut([breakStart + widest[0].length, last])]
+    const paragraphBreaks = lineBreaks.filter(found => newlines(found[0]) > 1)
+    // A run that crosses paragraph breaks between kept words: cut each paragraph of it apart, so one paragraph break stays.
+    if (paragraphBreaks.length > 0 && before > 0 && after < text.length) {
+      const starts = [first, ...paragraphBreaks.map(found => first + found.index + found[0].length)]
+      const ends = [...paragraphBreaks.map(found => first + found.index), last]
+      // One level deep: each piece lies between two paragraph breaks, so its own cut never splits again.
+      return starts.flatMap((start, index) => cut([start, start + text.slice(start, ends[index]).trimEnd().length]))
     }
     // A run that ends inside a later line: the words kept after it keep that line's own indent.
     if (!endsLine && widest !== undefined && lastBreak !== undefined) {
