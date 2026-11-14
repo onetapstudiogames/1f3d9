@@ -69,6 +69,68 @@ function withoutOutsidePaymentLinks(html: string, legal: boolean): string {
   )), withoutMarketMentions(html, legal))
 }
 
+// A text page's paragraphs part at blank lines and its sentences at the whitespace after . ! or ?.
+const PARAGRAPH_BREAK = /\n\s*\n/gu
+const SENTENCE_BREAK = /(?<=[.!?])\s+/gu
+const LINE_SPACE = /^[^\S\r\n]*/u
+// Inside a run, a line break with any blank lines and the next line's indent. It starts at the break, so it reads in one pass.
+const INNER_LINE_BREAK = /\r?\n\s*/gu
+const BUY_PATH = '/buy'
+type Span = readonly [start: number, end: number]
+
+/** Where each run of adjacent sentences naming the buy page sits, without the whitespace around the run. */
+function buySentenceRuns(text: string): readonly Span[] {
+  const pieces = ([from, to]: Span, pattern: RegExp): Span[] => {
+    const breaks = [...text.slice(from, to).matchAll(pattern)]
+    const starts = [0, ...breaks.map(found => found.index + found[0].length)]
+    return starts.map((start, index) => [from + start, from + (breaks[index]?.index ?? to - from)] as const)
+  }
+  const runs: Span[] = []
+  for (const paragraph of pieces([0, text.length], PARAGRAPH_BREAK)) {
+    for (const [start, end] of pieces(paragraph, SENTENCE_BREAK)) {
+      const sentence = text.slice(start, end)
+      if (!sentence.includes(BUY_PATH)) continue
+      const first = start + sentence.length - sentence.trimStart().length
+      const last = end - (sentence.length - sentence.trimEnd().length)
+      const previous = runs.at(-1)
+      if (previous && text.slice(previous[1], first).trim() === '') runs.splice(-1, 1, [previous[0], last])
+      else runs.push([first, last])
+    }
+  }
+  return runs
+}
+
+/** Cut each run out with only the whitespace a tidy cut needs, so every kept character and line break stays as served. */
+function withoutBuySentences(text: string): string {
+  const newlines = (part: string) => part.split('\n').length - 1
+  const cut = ([first, last]: Span): Span[] => {
+    const before = text.slice(0, first).trimEnd().length
+    const after = text.length - text.slice(last).trimStart().length
+    const leading = text.slice(before, first)
+    const trailing = text.slice(last, after)
+    const startsLine = before === 0 || leading.includes('\n')
+    const endsLine = after === text.length || trailing.includes('\n')
+    const toLineEnd = last + (LINE_SPACE.exec(trailing)?.[0].length ?? 0)
+    // Kept words before and after a run that crosses lines: keep its widest line break between them.
+    const lineBreak = [...text.slice(first, last).matchAll(INNER_LINE_BREAK)]
+      .sort((one, other) => newlines(other[0]) - newlines(one[0]))[0]
+    if (!startsLine && !endsLine && lineBreak !== undefined) {
+      const breakStart = first + lineBreak.index
+      return [[before, breakStart], [breakStart + lineBreak[0].length, after]]
+    }
+    // Kept words share the line: drop the run and the spaces on one side of it.
+    if (!endsLine) return [[first, after]]
+    if (!startsLine || after === text.length) return [[before, toLineEnd]]
+    // The run fills whole lines: drop them with one line break, or a whole paragraph with its blank line.
+    if (before === 0) return [[0, last + trailing.lastIndexOf('\n') + 1]]
+    const paragraph = newlines(leading) > 1 && newlines(trailing) > 1
+    return [[before + leading.lastIndexOf('\n') + 1, last + (paragraph ? trailing.lastIndexOf('\n') : trailing.indexOf('\n')) + 1]]
+  }
+  const cuts = buySentenceRuns(text).flatMap(cut)
+  const kept = cuts.map(([, end], index) => text.slice(end, cuts[index + 1]?.[0] ?? text.length))
+  return text.slice(0, cuts[0]?.[0] ?? text.length) + kept.join('')
+}
+
 /** Apply the Android presentation at the response boundary, including cached source pages. */
 export const appPagePurchaseLinks: MiddlewareHandler = async (c, next) => {
   await next()
@@ -90,9 +152,7 @@ export const appPagePurchaseLinks: MiddlewareHandler = async (c, next) => {
     /<a\b[^>]*\bhref=["'](?:https:\/\/1f3d9\.com)?\/buy(?:[?#][^"']*)?["'][^>]*>([\s\S]*?)<\/a>/giu,
     (_anchor, label: string) => legal ? label : '',
   )
-  const body = html ? withoutOutsidePaymentLinks(withoutBuyLinks, legal) : legal ? withoutBuyLinks : withoutBuyLinks.split(/\n\s*\n/u).map(paragraph =>
-        paragraph.split(/(?<=[.!?])\s+/u).filter(sentence => !sentence.includes('/buy')).join(' '),
-      ).join('\n\n')
+  const body = html ? withoutOutsidePaymentLinks(withoutBuyLinks, legal) : legal ? withoutBuyLinks : withoutBuySentences(withoutBuyLinks)
   const headers = new Headers(c.res.headers)
   // No shared or browser cache may substitute the normal site's purchase links.
   headers.set('Cache-Control', 'no-store')

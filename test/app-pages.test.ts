@@ -50,6 +50,142 @@ test('app pages hide purchase links and sentences, preserve legal text, and cann
 })
 
 
+// Each case is [what it covers, the plain text page, the same page opened from the app].
+const APP_TEXT_CASES: readonly (readonly [string, string, string])[] = [
+  ['a list whose lines end in full stops and name no buy page',
+    'Steps.\n- One.\n- Two.\n  - Two and a half.\n- Three.\n\nAfter the list.\n',
+    'Steps.\n- One.\n- Two.\n  - Two and a half.\n- Three.\n\nAfter the list.\n'],
+  ['a buy sentence in the middle of a line',
+    'Intro.\nRead the city. Fund one at /buy now. Then walk.\nEnd.\n',
+    'Intro.\nRead the city. Then walk.\nEnd.\n'],
+  ['a buy sentence at the start of a line',
+    'Intro.\nFund one at /buy. Then walk.\nEnd.\n',
+    'Intro.\nThen walk.\nEnd.\n'],
+  ['a buy sentence at the end of a line',
+    'Intro.\nRead the city. Fund one at /buy.\nEnd.\n',
+    'Intro.\nRead the city.\nEnd.\n'],
+  ['a buy sentence alone on its line in an indented list',
+    'Steps:\n  - First.\n  - Fund one at /buy.\n  - Last.\n',
+    'Steps:\n  - First.\n  - Last.\n'],
+  ['a whole paragraph of buy sentences',
+    'First paragraph.\n\nFund one at /buy.\nGift one at /buy too.\n\nLast paragraph.\n',
+    'First paragraph.\n\nLast paragraph.\n'],
+  ['two buy sentences in a row',
+    'Read. Fund one at /buy. Gift one at /buy. Walk.\n',
+    'Read. Walk.\n'],
+  ['buy sentences at the very start of the page',
+    'Fund one at /buy. Read the city.\nWalk.\n',
+    'Read the city.\nWalk.\n'],
+  ['a buy line at the very start of the page',
+    'Fund one at /buy.\nRead.\n',
+    'Read.\n'],
+  ['a buy paragraph at the very start of the page',
+    'Fund one at /buy.\n\nRead.\n',
+    'Read.\n'],
+  ['a buy line at the very end of the page, with a final line break',
+    'Read.\nFund one at /buy.\n',
+    'Read.\n'],
+  ['a buy line at the very end of the page, without a final line break',
+    'Read.\nFund one at /buy.',
+    'Read.'],
+  ['a buy sentence ending the page mid-line, without a final line break',
+    'Read. Fund one at /buy.',
+    'Read.'],
+  ['a buy paragraph at the very end of the page',
+    'Read.\n\nFund one at /buy.\n',
+    'Read.\n'],
+  ['a sentence naming the buy page with other words goes whole, as before',
+    'Questions go to POST /api/flag; fee credit is at /buy. Walk on.\n',
+    'Walk on.\n'],
+  ['a buy sentence that starts on one line and ends on the next keeps the line break between the kept words',
+    'Agents speak in places. Humans may watch and fund\nfee credit when /buy is open. Funding grants no rights.\n',
+    'Agents speak in places.\nFunding grants no rights.\n'],
+  ['a buy sentence that starts mid-line and ends a later line takes the lines it fills',
+    'Intro.\nYour agent can. Humans have two\nacts: report content and fund a\nresident at /buy when it is open.\nFunding grants nothing.\n',
+    'Intro.\nYour agent can.\nFunding grants nothing.\n'],
+  ['Windows line endings stay as served',
+    'Intro.\r\nFund one at /buy.\r\nRead. Gift one at /buy. Walk.\r\n\r\nGift one at /buy.\r\n\r\nEnd.\r\n',
+    'Intro.\r\nRead. Walk.\r\n\r\nEnd.\r\n'],
+]
+
+test('app text pages lose only the sentences naming the buy page and keep every line break', async () => {
+  for (const [label, plain, expected] of APP_TEXT_CASES) {
+    const app = new Hono()
+    app.use('*', appPagePurchaseLinks)
+    app.get('/reference.txt', c => c.text(plain))
+    assert.equal(await (await app.request('/reference.txt')).text(), plain, label)
+    const embedded = await app.request('/reference.txt?from=app')
+    assert.equal(await embedded.text(), expected, label)
+    assert.equal(embedded.headers.get('cache-control'), 'no-store', label)
+  }
+})
+
+type LeftOutRun = Readonly<{ lines: readonly string[], besideCutLine: boolean }>
+
+/** Plain lines the app version left out, in order, or null when an app line is not a plain line or one with a buy sentence cut out. */
+function linesLeftOut(plain: readonly string[], embedded: readonly string[]): LeftOutRun[] | null {
+  const runs: LeftOutRun[] = []
+  let next = 0
+  let previousCut = false
+  for (const line of embedded) {
+    const skipped: string[] = []
+    while (next < plain.length && !isPlainOrCutLine(plain[next] ?? '', line)) skipped.push(plain[next++] ?? '')
+    if (next === plain.length) return null
+    const cutLine = plain[next] !== line
+    if (skipped.length > 0) runs.push({ lines: skipped, besideCutLine: previousCut || cutLine })
+    previousCut = cutLine
+    next += 1
+  }
+  return plain.length > next ? [...runs, { lines: plain.slice(next), besideCutLine: previousCut }] : runs
+}
+
+/** A buy sentence is cut from inside one line, or it crosses lines and takes the end or start of this one. */
+function isPlainOrCutLine(plainLine: string, line: string): boolean {
+  if (plainLine === line) return true
+  if (line.trim() === '') return false
+  let prefix = 0
+  while (prefix < line.length && plainLine[prefix] === line[prefix]) prefix += 1
+  const suffix = line.length - prefix
+  if (!plainLine.endsWith(line.slice(prefix))) return false
+  const removed = plainLine.slice(prefix, plainLine.length - suffix)
+  return removed.includes('/buy') || prefix === 0 || suffix === 0
+}
+
+test('the real text pages opened from the app keep every line that names no buy page', async () => {
+  process.env.REVENUECAT_SECRET_KEY = ''
+  process.env.DATABASE_URL = ''
+  process.env.PUBLIC_ORIGIN = 'https://1f3d9.com'
+  // The site module loads once per file, so this test sets the same web buy settings as the one below.
+  process.env.PAYPAL_ENV = 'sandbox'
+  process.env.PAYPAL_CLIENT_ID = 'test-client-id'
+  process.env.PAYPAL_CLIENT_SECRET = 'test-client-secret'
+  process.env.PAYPAL_WEBHOOK_ID = 'test-webhook-id'
+  const { default: site } = await import('../src/index.ts')
+  const { REFERENCE_SECTIONS } = await import('../src/door.ts')
+  const paths = ['/', '/llms.txt', '/reference.txt', ...Object.keys(REFERENCE_SECTIONS).map(slug => `/reference/${slug}.txt`)]
+  assert.ok(paths.includes('/reference/money.txt') && paths.includes('/reference/mcp.txt'))
+  let pagesNamingBuy = 0
+  for (const path of paths) {
+    const plain = await (await site.request(path)).text()
+    const embedded = await (await site.request(`${path}?from=app`)).text()
+    assert.doesNotMatch(embedded, /\/buy/u, path)
+    if (!plain.includes('/buy')) {
+      assert.equal(embedded, plain, path)
+      continue
+    }
+    pagesNamingBuy += 1
+    const leftOut = linesLeftOut(plain.split('\n'), embedded.split('\n'))
+    assert.ok(leftOut, `${path}: an app line is neither a plain line nor one with a buy sentence cut out`)
+    for (const { lines, besideCutLine } of leftOut) {
+      if (lines.every(line => line.trim() === '') || besideCutLine) continue
+      assert.match(lines.join('\n'), /\/buy/u, `${path}: ${lines.join(' / ')}`)
+    }
+    const removedWhole = leftOut.reduce((count, { lines }) => count + lines.length, 0)
+    assert.ok(plain.split('\n').length - embedded.split('\n').length <= removedWhole, path)
+  }
+  assert.ok(pagesNamingBuy >= 2, 'the front door and the mcp section name the buy page')
+})
+
 test('mounted site accepts app windows and applies hiding to its real guide and reference responses', async () => {
   process.env.REVENUECAT_SECRET_KEY = ''
   process.env.DATABASE_URL = ''

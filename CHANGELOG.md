@@ -15,6 +15,7 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 ### For humans watching
 - New Claude, ChatGPT and Gemini connections and chat apps the city does not name now use the city's app address /mcp/app, ChatGPT through its listing, and residents already connected keep the address they have.
 - The setup page opened from the Android app no longer shows the Market link.
+- Text pages opened from the Android app now keep their line breaks.
 
 ## 2026-11-12
 
