@@ -128,7 +128,7 @@ function withoutBuySentences(text: string): string {
     if (!endsLine) return [[first, after]]
     if (!startsLine || after === text.length) return [[before, toLineEnd]]
     // The run fills whole lines: drop them with one line break, or a whole paragraph with its blank line.
-    if (before === 0) return [[0, last + trailing.lastIndexOf('\n') + 1]]
+    if (before === 0) return [[leading.lastIndexOf('\n') + 1, last + trailing.lastIndexOf('\n') + 1]]
     const paragraph = newlines(leading) > 1 && newlines(trailing) > 1
     return [[before + leading.lastIndexOf('\n') + 1, last + (paragraph ? trailing.lastIndexOf('\n') : trailing.indexOf('\n')) + 1]]
   }

@@ -121,6 +121,18 @@ const APP_TEXT_CASES: readonly (readonly [string, string, string])[] = [
   ['Windows line endings stay as served',
     'Intro.\r\nFund one at /buy.\r\nRead. Gift one at /buy. Walk.\r\n\r\nGift one at /buy.\r\n\r\nEnd.\r\n',
     'Intro.\r\nRead. Walk.\r\n\r\nEnd.\r\n'],
+  ['blank lines that open the page stay when the buy line after them goes',
+    '\n\nFund one at /buy.\nRead.\n',
+    '\n\nRead.\n'],
+  ['a line of spaces that opens the page stays when the buy line after it goes',
+    '  \nFund one at /buy.\nRead.\n',
+    '  \nRead.\n'],
+  ['one blank line that opens the page stays when the buy line after it goes',
+    '\nFund one at /buy.\nRead.\n',
+    '\nRead.\n'],
+  ['blank lines that open the page stay when the buy paragraph after them goes',
+    '\n\nFund one at /buy.\n\nRead.\n',
+    '\n\nRead.\n'],
 ]
 
 test('app text pages lose only the sentences naming the buy page and keep every line break', async () => {
@@ -133,6 +145,131 @@ test('app text pages lose only the sentences naming the buy page and keep every 
     assert.equal(await embedded.text(), expected, label)
     assert.equal(embedded.headers.get('cache-control'), 'no-store', label)
   }
+})
+
+// The property test reads the same generated texts on every run.
+const PROPERTY_SEED = 0x1f3d9
+const PROPERTY_TEXTS = 2000
+const PROPERTY_TIME_LIMIT_MS = 2000
+const OPENINGS = ['', '', '', '\n', '\n\n', '  \n', '\t\n\n', '\n \n']
+const ENDINGS = ['', '\n', '\n', '\n\n', '\n\n\n', '\n  ']
+const PARAGRAPH_GAPS = ['\n\n', '\n\n', '\n\n\n', '\n  \n', '\n\t\n\n']
+const INDENTS = ['', '', '', '  ', '    ', '\t']
+const SENTENCE_ENDS = ['.', '.', '!', '?', ':', '']
+
+/** A small seeded generator (mulberry32), so no run depends on chance. */
+function seededRandom(seed: number): () => number {
+  let state = seed >>> 0
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0
+    let mixed = Math.imul(state ^ (state >>> 15), 1 | state)
+    mixed = (mixed + Math.imul(mixed ^ (mixed >>> 7), 61 | mixed)) ^ mixed
+    return ((mixed ^ (mixed >>> 14)) >>> 0) / 4294967296
+  }
+}
+
+/** A text of numbered words, so every kept word names the one plain line it came from. */
+function generatedText(random: () => number): string {
+  const pick = <T>(choices: readonly T[]): T => choices[Math.floor(random() * choices.length)] as T
+  let words = 0
+  const lineBreak = () => `\n${pick(INDENTS)}`
+  const sentence = (namesBuy: boolean): string => {
+    const count = 1 + Math.floor(random() * 4)
+    const buyAt = namesBuy ? Math.floor(random() * count) : -1
+    let breaks = 0
+    const parts = Array.from({ length: count }, (_, index) => {
+      const word = index === buyAt ? '/buy' : `w${++words}`
+      const spansLines = index > 0 && breaks < 2 && random() < 0.2
+      if (spansLines) breaks += 1
+      return (index === 0 ? '' : spansLines ? lineBreak() : ' ') + word
+    })
+    return parts.join('') + pick(SENTENCE_ENDS)
+  }
+  const paragraph = (buyRate: number): string => {
+    const count = 1 + Math.floor(random() * 4)
+    const sentences = Array.from({ length: count }, () => sentence(random() < buyRate))
+    return pick(INDENTS) + sentences.map((text, index) => (index === 0 ? '' : random() < 0.6 ? ' ' : lineBreak()) + text).join('')
+  }
+  const noBuy = random() < 0.2
+  const paragraphs = Array.from({ length: 1 + Math.floor(random() * 4) }, () => (
+    paragraph(noBuy ? 0 : random() < 0.15 ? 1 : 0.35)
+  ))
+  const text = pick(OPENINGS) + paragraphs.map((text, index) => (index === 0 ? '' : pick(PARAGRAPH_GAPS)) + text).join('') + pick(ENDINGS)
+  return random() < 0.3 ? text.replaceAll('\n', '\r\n') : text
+}
+
+/** Main's filter before this fix, kept here as the record of which sentences go. */
+function oldAppText(text: string): string {
+  return text.split(/\n\s*\n/u).map(paragraph =>
+    paragraph.split(/(?<=[.!?])\s+/u).filter(sentence => !sentence.includes('/buy')).join(' '),
+  ).join('\n\n')
+}
+
+const collapsed = (text: string) => text.replace(/\s+/gu, ' ').trim()
+const openingBlankLines = (text: string) => /^(?:[^\S\n]*\n)*/u.exec(text)?.[0] ?? ''
+const isBlank = (line: string) => line.trim() === ''
+const lineSpace = (line: string, at: 'start' | 'end') => (at === 'start' ? /^[ \t]*/u : /[ \t]*\r?$/u).exec(line)?.[0].replace('\r', '') ?? ''
+
+/** True when the app text is the plain text with spans removed, nothing added or reordered. */
+function isDeletionOnly(plain: string, embedded: string): boolean {
+  let next = 0
+  for (const character of embedded) {
+    next = plain.indexOf(character, next) + 1
+    if (next === 0) return false
+  }
+  return true
+}
+
+/** Blank lines in a row at most; the empty piece after a final line break is not a line. */
+function longestBlankRun(text: string): number {
+  const lines = text.endsWith('\n') ? text.slice(0, -1).split('\n') : text.split('\n')
+  return lines.reduce<readonly [longest: number, run: number]>(([longest, run], line) => {
+    const current = isBlank(line) ? run + 1 : 0
+    return [Math.max(longest, current), current]
+  }, [0, 0])[0]
+}
+
+/** Each kept line holds words of one plain line, is no longer than it, and keeps its indent and its lack of a trailing space. */
+function assertKeptLines(plain: string, embedded: string, label: string): void {
+  const plainLines = plain.split('\n')
+  const lineOf = new Map(plainLines.flatMap((line, index) => line.split(/\s+/u).filter(Boolean).map(word => [word, index] as const)))
+  for (const line of embedded.split('\n').filter(line => !isBlank(line))) {
+    const sources = new Set(line.split(/\s+/u).filter(Boolean).map(word => lineOf.get(word)))
+    assert.equal(sources.size, 1, `${label}: kept line ${JSON.stringify(line)} joins plain lines`)
+    const source = plainLines[[...sources][0] ?? -1]
+    assert.ok(source !== undefined, `${label}: kept line ${JSON.stringify(line)} has a word the plain text lacks`)
+    assert.ok(line.length <= source.length, `${label}: kept line ${JSON.stringify(line)} is longer than its plain line`)
+    assert.equal(lineSpace(line, 'start'), lineSpace(source, 'start'), `${label}: kept line ${JSON.stringify(line)} changed its indent`)
+    if (lineSpace(source, 'end') === '') assert.equal(lineSpace(line, 'end'), '', `${label}: kept line ${JSON.stringify(line)} gained a trailing space`)
+  }
+}
+
+function assertTidyCut(plain: string, embedded: string, label: string): void {
+  if (!plain.includes('/buy')) return assert.equal(embedded, plain, label)
+  assert.ok(isDeletionOnly(plain, embedded), `${label}: the app text is not the plain text with spans removed`)
+  assert.equal(collapsed(embedded), collapsed(oldAppText(plain)), `${label}: not the same sentences as before`)
+  assertKeptLines(plain, embedded, label)
+  // A page whose every sentence went keeps its last line break, so it is blank lines by design and has no runs to compare.
+  if (embedded.trim() === '') return
+  assert.ok(longestBlankRun(embedded) <= longestBlankRun(plain), `${label}: a longer blank-line run`)
+  assert.equal(openingBlankLines(embedded), openingBlankLines(plain), `${label}: the opening blank lines changed`)
+}
+
+test('generated text pages opened from the app lose only the old sentences, by deletion, with tidy cuts', async () => {
+  let current = ''
+  const app = new Hono()
+  app.use('*', appPagePurchaseLinks)
+  app.get('/reference.txt', c => c.text(current))
+  const random = seededRandom(PROPERTY_SEED)
+  const started = performance.now()
+  for (let index = 0; index < PROPERTY_TEXTS; index += 1) {
+    current = generatedText(random)
+    const label = `text ${index} ${JSON.stringify(current)}`
+    const embedded = await (await app.request('/reference.txt?from=app')).text()
+    assertTidyCut(current, embedded, label)
+  }
+  const elapsed = performance.now() - started
+  assert.ok(elapsed < PROPERTY_TIME_LIMIT_MS, `the property run took ${Math.round(elapsed)} ms`)
 })
 
 type LeftOutRun = Readonly<{ lines: readonly string[], besideCutLine: boolean }>
