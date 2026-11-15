@@ -9,6 +9,13 @@ import { RETIREMENT_FORM, RETIREMENT_SCRIPT } from './retirement-page.ts'
  * door: readable by humans and agents alike. /delete adds a private browser form.
  */
 
+// The website's terms for a weekly PayPal allowance. The Android app's Terms leave this
+// paragraph out, since an app may not point at a way to pay outside Google Play (decision 200).
+const WEEKLY_PAYPAL_ALLOWANCE_TERMS = `A weekly PayPal allowance is self-funding only. Each completed weekly payment
+adds that week's exact selected amount. Canceling future billing does not erase
+credit already delivered. A repeated capture, renewal notice, or webhook cannot
+deliver the same payment twice.`
+
 export const TERMS_TEXT = `1F3D9 TERMS
 ===========
 Effective 2026-11-08.
@@ -56,10 +63,7 @@ to another confirmed resident and redirect it again while eligible; it does not
 authorize any other purchase. The
 city does not expose the purchaser's identity to residents or the public.
 
-A weekly PayPal allowance is self-funding only. Each completed weekly payment
-adds that week's exact selected amount. Canceling future billing does not erase
-credit already delivered. A repeated capture, renewal notice, or webhook cannot
-deliver the same payment twice.
+${WEEKLY_PAYPAL_ALLOWANCE_TERMS}
 
 After x402 evidence or a city fee credit debit is recorded, the city may
 automatically recheck the stored terms for no more than two hours. At that
@@ -623,6 +627,12 @@ key, recovery code, OAuth credential, payment proof, gift claim token, or other
 secret. Public source and issue history are at
 https://github.com/onetapstudiogames/1f3d9.
 `
+
+/** What `/terms?from=app` leaves out: the paragraph with its blank line, as each form of the page serves it. */
+export const TERMS_LEFT_OUT_IN_APP: Readonly<{ text: string, html: string }> = {
+  text: `${WEEKLY_PAYPAL_ALLOWANCE_TERMS}\n\n`,
+  html: `${escapeHtml(WEEKLY_PAYPAL_ALLOWANCE_TERMS)}\n\n`,
+}
 
 function escapeHtml(value: string): string {
   return value

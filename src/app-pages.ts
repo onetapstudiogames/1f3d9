@@ -1,4 +1,5 @@
 import type { Hono, MiddlewareHandler } from 'hono'
+import { TERMS_LEFT_OUT_IN_APP } from './legal.ts'
 
 // Public values supplied by the owner from Play Console and AdMob.
 const PLAY_APP_SIGNING_SHA256 = 'AF:55:52:4B:1C:DF:B2:1C:35:B0:41:6C:DC:C6:BD:D8:0B:D5:D8:7C:14:7B:AD:5B:D3:57:FC:B7:01:5A:6E:F5'
@@ -26,6 +27,7 @@ const APP_PAGE_PATHS = new Set([
   '/terms', '/privacy', '/delete', '/support', '/reference.txt', '/llms.txt',
 ])
 const LEGAL_PATHS = new Set(['/terms', '/privacy', '/delete', '/support'])
+const TERMS_PATH = '/terms'
 // In the app, tips go through Google Play billing, so pages there point at no payment outside it.
 const OUTSIDE_LINK_PATTERNS = [
   /(?:\s*·\s*)?<a\b[^>]*\bhref=["']https:\/\/(?:www\.)?paypal\.com\/donate(?:[/?#][^"']*)?["'][^>]*>([\s\S]*?)<\/a>(?:\s*\([^()<]*\))?/giu,
@@ -155,9 +157,11 @@ export const appPagePurchaseLinks: MiddlewareHandler = async (c, next) => {
   c.header('Cache-Control', 'no-store')
   c.header('Content-Length', undefined)
   c.header('ETag', undefined)
-  const source = await c.res.text()
+  const served = await c.res.text()
   const html = contentType.includes('text/html')
   const legal = LEGAL_PATHS.has(c.req.path)
+  // The one exception to keeping every legal word: the Terms leave out the weekly PayPal allowance (decision 200).
+  const source = c.req.path === TERMS_PATH ? served.replace(html ? TERMS_LEFT_OUT_IN_APP.html : TERMS_LEFT_OUT_IN_APP.text, '') : served
   // Keep every legal word. Only remove the ability to click through to a purchase.
   const content = html && !legal
     ? source.replace(/<p\b[^>]*>[\s\S]*?<\/p>/giu, paragraph => paragraph.includes('/buy') ? '' : paragraph)

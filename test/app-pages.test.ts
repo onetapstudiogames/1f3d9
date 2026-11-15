@@ -46,7 +46,74 @@ test('app pages hide purchase links and sentences, preserve legal text, and cann
     assert.equal(embedded.headers.get('cache-control'), 'no-store')
   }
   const terms = await app.request('/terms?from=app', { headers: { accept: 'text/plain' } })
-  assert.equal(await terms.text(), TERMS_TEXT)
+  assert.equal(await terms.text(), TERMS_TEXT.replace(WEEKLY_PAYPAL_PARAGRAPH, ''))
+})
+
+// The one Terms paragraph the app leaves out (decision 200), word for word as the website
+// serves it, with the blank line after it. If its words change, these tests fail loudly.
+const WEEKLY_PAYPAL_PARAGRAPH = [
+  'A weekly PayPal allowance is self-funding only. Each completed weekly payment',
+  "adds that week's exact selected amount. Canceling future billing does not erase",
+  'credit already delivered. A repeated capture, renewal notice, or webhook cannot',
+  'deliver the same payment twice.',
+].join('\n') + '\n\n'
+const WEEKLY_PAYPAL_PARAGRAPH_HTML = WEEKLY_PAYPAL_PARAGRAPH.replaceAll("'", '&#39;')
+const LEGAL_MARKET_NAV_ITEM = /\s*<a href="\/market"(?: aria-current="page")?>Market<\/a>/gu
+const LEGAL_PAGE_PATHS = ['/terms', '/privacy', '/delete', '/support'] as const
+const ACCEPT_TYPES = ['text/html', 'text/plain'] as const
+
+function legalApps(): Readonly<{ withMarker: Hono, plain: Hono }> {
+  const withMarker = new Hono()
+  withMarker.use('*', appPagePurchaseLinks)
+  mountLegalRoutes(withMarker)
+  const plain = new Hono()
+  mountLegalRoutes(plain)
+  return { withMarker, plain }
+}
+
+function occurrences(text: string, part: string): number {
+  return text.split(part).length - 1
+}
+
+test('the Terms page opened from the app leaves out the weekly PayPal allowance paragraph and nothing else', async () => {
+  const { withMarker, plain } = legalApps()
+  assert.equal(occurrences(TERMS_TEXT, WEEKLY_PAYPAL_PARAGRAPH), 1, 'the Terms text carries the paragraph once, word for word')
+  const android = /THE ANDROID APP\n---------------\n[\s\S]*?\n\n/u.exec(TERMS_TEXT)?.[0] ?? ''
+  assert.match(android, /fee credits as a gift/u)
+  for (const accept of ACCEPT_TYPES) {
+    const html = accept === 'text/html'
+    const paragraph = html ? WEEKLY_PAYPAL_PARAGRAPH_HTML : WEEKLY_PAYPAL_PARAGRAPH
+    const normal = await (await plain.request('/terms', { headers: { accept } })).text()
+    assert.equal(occurrences(normal, paragraph), 1, `${accept}: the website serves the paragraph once`)
+    const embedded = await withMarker.request('/terms?from=app', { headers: { accept } })
+    const served = await embedded.text()
+    const expected = (html ? normal.replace(LEGAL_MARKET_NAV_ITEM, '') : normal).replace(paragraph, '')
+    assert.equal(served, expected, `${accept}: only the paragraph and its blank line go, beside the header Market item`)
+    assert.doesNotMatch(served, /weekly|allowance|self-funding/iu, accept)
+    assert.match(served, /purchaser(?:'|&#39;)s identity to residents or the public\.\n\nAfter x402 evidence/u, accept)
+    assert.match(served, /PayPal may\nprocess a whole-dollar purchase/u, accept)
+    assert.match(served, /1\.000000 USDC on Base/u, accept)
+    assert.match(served, /Voluntary human tips through the\ndonate link go to TWAMD LLC/u, accept)
+    if (!html) assert.ok(served.includes(android), 'the Android app section stays word for word')
+    else assert.ok(served.includes(/THE ANDROID APP\n[\s\S]*?\n\nYOUR CONTENT/u.exec(normal)?.[0] ?? 'missing'), 'the Android app section stays word for word')
+    assert.equal(embedded.headers.get('cache-control'), 'no-store', accept)
+  }
+})
+
+test('the legal pages without the marker, and privacy, delete and support with it, read as before', async () => {
+  const { withMarker, plain } = legalApps()
+  for (const path of LEGAL_PAGE_PATHS) {
+    for (const accept of ACCEPT_TYPES) {
+      const served = await withMarker.request(path, { headers: { accept } })
+      const expected = await plain.request(path, { headers: { accept } })
+      assert.equal(await served.text(), await expected.text(), `${path} ${accept}`)
+      assert.deepEqual([...served.headers], [...expected.headers], `${path} ${accept}`)
+      if (path === '/terms') continue
+      const normal = await (await plain.request(path, { headers: { accept } })).text()
+      const embedded = await (await withMarker.request(`${path}?from=app`, { headers: { accept } })).text()
+      assert.equal(embedded, accept === 'text/html' ? normal.replace(LEGAL_MARKET_NAV_ITEM, '') : normal, `${path}?from=app ${accept}`)
+    }
+  }
 })
 
 
