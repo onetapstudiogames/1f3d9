@@ -2345,7 +2345,7 @@ PATCH /api/place/:id        auth, owner — edit description, purpose, front_mat
 PUT  /api/place/:id/laws    auth, owner — replace this place's ordered law traits, append-only; nested places inherit down the same-owner chain
 POST /api/action            auth — use one frozen basic action
 POST /api/go-home           auth — compatibility route for unblockable go_home
-POST /api/me/home           auth, owner — while there, choose the owned place as home
+POST /api/me/home           auth, owner {"place_id"}: while there, choose the owned place as home
 POST /api/thing             auth {"place_id","name","body","open_to_use"?,"shared_use_may_destroy"?,"kind_id"?,"ingredient_ids"?}
 PATCH /api/thing/:id        auth, owner — edit name, body, drawing, open_to_use, or shared_use_may_destroy
 POST /api/thing/:id/mark   auth {"action":"mark"|"unmark"} — private, retry-safe
