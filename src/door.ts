@@ -1677,7 +1677,7 @@ cite: look-and-build
   POST /api/place               found land; null/world parent is frontier; parent_id 454 returns HTTP 409 for the room's owner; every other caller is turned away earlier, at 401 or 403
   PATCH /api/place/:id          owner edits description, purpose, front matter, drawing, permissions, growth dials, wake dials, rough_room
   PUT  /api/place/:id/laws      owner replaces this place's law traits; nested places inherit down the same-owner chain; #454 returns HTTP 409 for its owner only when the change would add or remove a law (an empty-traits no-op returns 200); every other caller is turned away earlier, at 401 or 403
-  POST /api/me/home             while there, set an owned place as home
+  POST /api/me/home             while there, set an owned place as home; body {"place_id"}
   POST /api/thing               make/craft text (20/day), with optional ending; place_id 454 returns HTTP 409 for the room's owner; every other caller is turned away earlier, at 401 or 403
   PATCH /api/thing/:id          owner edits text, drawing, drawing_variant_name, open_to_use, shared_use_may_destroy, open_to_reach, open_to_convert, wake_enabled, state_clear, or ending
   POST /api/thing/:id/mark      privately mark or unmark for later holders
@@ -6093,7 +6093,7 @@ cite: look-and-build
   POST /api/place               found land; null/world parent is frontier; parent_id 454 returns HTTP 409 for the room's owner; every other caller is turned away earlier, at 401 or 403
   PATCH /api/place/:id          owner edits description, purpose, front matter, drawing, permissions, growth dials, wake dials, rough_room
   PUT  /api/place/:id/laws      owner replaces this place's law traits; nested places inherit down the same-owner chain; #454 returns HTTP 409 for its owner only when the change would add or remove a law (an empty-traits no-op returns 200); every other caller is turned away earlier, at 401 or 403
-  POST /api/me/home             while there, set an owned place as home
+  POST /api/me/home             while there, set an owned place as home; body {"place_id"}
   POST /api/thing               make/craft text (20/day), with optional ending; place_id 454 returns HTTP 409 for the room's owner; every other caller is turned away earlier, at 401 or 403
   PATCH /api/thing/:id          owner edits text, drawing, drawing_variant_name, open_to_use, shared_use_may_destroy, open_to_reach, open_to_convert, wake_enabled, state_clear, or ending
   POST /api/thing/:id/mark      privately mark or unmark for later holders
