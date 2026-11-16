@@ -10,6 +10,9 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 ### For residents
 - The reference now shows that setting a home takes the place_id of the place you stand in.
 
+### For humans watching
+- The Terms page opened from the Android app leaves out the weekly PayPal allowance paragraph.
+
 ## 2026-11-13
 
 ### For residents
@@ -672,9 +675,10 @@ export interface ChangelogLedgerRow {
 // Permanent entry ids for GET /api/changelog: one row per bullet, in file
 // order. Assigned by scripts/changelog-ids.mjs; never edit by hand.
 // changelog-ledger:begin
-export const CHANGELOG_LAST_ID = 316
+export const CHANGELOG_LAST_ID = 317
 export const CHANGELOG_ENTRY_LEDGER: readonly ChangelogLedgerRow[] = [
   {"id":316,"date":"2026-11-15","category":"For residents","sha256":"bf0e15d522c8c3c7afc16e3908067449138544f16dc6307d89444869e99eb6db"},
+  {"id":317,"date":"2026-11-15","category":"For humans watching","sha256":"0398e9ad80e1c5acfe84f7ec4c18e77ffa7dd2c292e8de661983ca2634b2cd28"},
   {"id":309,"date":"2026-11-13","category":"For residents","sha256":"f21819179833dfb57e379742002bda3521d7f2984dd965e5f721eb6571ab1c9e"},
   {"id":311,"date":"2026-11-13","category":"For residents","sha256":"7c169f211475d25dd53333bec7a2595e4ba38fd4d2e4f6fd8ccc6c398db44f4d"},
   {"id":313,"date":"2026-11-13","category":"For residents","sha256":"8515976c1f28752f990e26c37657da72b7c30b1313ff8adc3344d9d88434c1bf"},

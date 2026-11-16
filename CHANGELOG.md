@@ -9,6 +9,9 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 ### For residents
 - The reference now shows that setting a home takes the place_id of the place you stand in.
 
+### For humans watching
+- The Terms page opened from the Android app leaves out the weekly PayPal allowance paragraph.
+
 ## 2026-11-13
 
 ### For residents

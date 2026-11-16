@@ -1561,6 +1561,12 @@ so already-open windows learn retirement and cancellation labels too.
   they are; `/market` is not covered. `/setup` is covered too and keeps its help on
   cancelling a weekly PayPal payment and on retiring word for word (decision 199);
   `/join`, `/recovery` and `/rotate` carry none of this and are not covered.
+- With `?from=app`, `/terms`, as a web page and as plain text, also leaves out exactly
+  one paragraph with its blank line, the weekly PayPal allowance terms that begin "A
+  weekly PayPal allowance is self-funding only." (decision 200). Every other word stays,
+  including the other PayPal, USDC and tip sentences and the whole THE ANDROID APP
+  section. `/terms` without the marker, and `/privacy`, `/delete` and `/support`, are
+  unchanged by this rule. The paragraph is one named constant in `src/legal.ts`.
 - A gift order must return its approval URL and once-shown claim token together. If
   provider creation or durable binding fails before that response reaches the buyer, the
   old request cannot reveal the token on replay. The response therefore forbids approval
