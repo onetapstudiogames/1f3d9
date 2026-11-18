@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { Context } from 'hono'
+import { GROK_CLIENT_ID } from './oauth-config.ts'
 
 export type OAuthFailureStage =
   | 'authorization_request'
@@ -34,6 +35,7 @@ export const CLIENT_REFUSAL_CHECKS = [
   'client_name_invalid',
   'callback_invalid',
   'claude_code_callbacks_mismatch',
+  'grok_callback_missing',
   'gemini_client_unrecognized',
 ] as const
 
@@ -61,6 +63,7 @@ export interface OAuthStageFailureRecord {
   stage: OAuthFailureStage
   request_id: string
   client_origin: string
+  client_family?: 'grok'
   error_class: string
   failed_check?: OAuthFailedCheck
   upstream_status_class?: UpstreamStatusClass
@@ -111,6 +114,7 @@ export interface OAuthRequestTrace {
   requestId: string
   startedAt: number
   clientOrigin: string
+  clientFamily?: 'grok'
 }
 
 export function defaultDiagnostics(record: Readonly<OAuthDiagnosticRecord>): void {
@@ -128,7 +132,7 @@ function safeClientOrigin(
   staticClients: readonly { clientId: string }[],
 ): string {
   if (typeof clientId !== 'string' || !clientId) return 'unknown'
-  if (staticClients.some(client => client.clientId === clientId)) return 'pre-registered'
+  if (clientId !== GROK_CLIENT_ID && staticClients.some(client => client.clientId === clientId)) return 'pre-registered'
   try {
     const parsed = new URL(clientId)
     if (parsed.protocol === 'https:' && !parsed.username && !parsed.password) return parsed.origin
@@ -139,11 +143,14 @@ function safeClientOrigin(
 }
 
 export function traceForClient(
-  trace: OAuthRequestTrace,
+  { requestId, startedAt }: OAuthRequestTrace,
   clientId: unknown,
   staticClients: readonly { clientId: string }[],
 ): OAuthRequestTrace {
-  return { ...trace, clientOrigin: safeClientOrigin(clientId, staticClients) }
+  return {
+    requestId, startedAt, clientOrigin: safeClientOrigin(clientId, staticClients),
+    ...(clientId === GROK_CLIENT_ID ? { clientFamily: 'grok' } : {}),
+  }
 }
 
 function elapsedSince(trace: OAuthRequestTrace): number {
@@ -166,6 +173,7 @@ export function recordFailure(
       stage,
       request_id: trace.requestId,
       client_origin: trace.clientOrigin,
+      ...(trace.clientFamily ? { client_family: trace.clientFamily } : {}),
       error_class: errorClass,
       ...(failedCheck ? { failed_check: failedCheck } : {}),
       ...(upstreamStatusClass ? { upstream_status_class: upstreamStatusClass } : {}),

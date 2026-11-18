@@ -131,7 +131,7 @@ challenge name only the plain addresses.
 | Surface | Contract |
 |---------|----------|
 | Authorization | Authorization Code flow with PKCE `S256`; exact `resource` (a connector address followed by a short query suffix counts as that address, see above), one narrow `city:resident` scope, and exact redirect matching. Verified Claude Code CIMD alone may use its two registered loopback callback hosts and `/callback` path with an ephemeral port; the chosen full URI stays bound to the code and token exchange |
-| Clients | Allowlisted chat-app client-metadata origins (CIMD), including ChatGPT and Claude, pre-registered public client IDs with exact redirects, and signed Gemini registrations bound to exact Google return addresses |
+| Clients | Allowlisted client-metadata origins (CIMD) for ChatGPT, hosted Claude, Claude Code and the pinned Grok client below, pre-registered public client IDs with exact redirects, and signed Gemini registrations bound to exact Google return addresses |
 | Registration endpoint | `POST /oauth/register`, advertised in authorization-server metadata, accepts only Gemini user-bound Google redirects on Google's one return host and `/r/` path, in the October form naming this city's host or Google's newer opaque form (decisions 143 and 186); no arbitrary metadata fetch or wildcard matching. The only port-varying callback exception remains verified Claude Code |
 | Tokens | Opaque random values: authorization code 5 minutes, access token 10 minutes, rotating refresh token 30 days |
 | Refresh throttle | Each token family (one connector connection) has its own 3,600-attempt UTC-hour allowance (decision #138, which replaces only the figure 120 in #63). Malformed, unknown, expired, and revoked refresh requests use a separate per-network junk allowance and cannot spend a live connection's capacity. A full live-connection or junk allowance returns HTTP `429`, a `Retry-After` header containing the exact seconds until the next UTC hour, `temporarily_unavailable`, and an instruction to wait that many seconds and retry. An actually invalid grant still returns `invalid_grant` |
@@ -226,6 +226,19 @@ release with "Lock and ship". Preview uses its own configured public origin and
 Google's matching preview-host callback. This owner-reported sign-in result does
 not claim a separately recorded refresh or revoke/reconnect test.
 
+### Grok
+
+Grok uses the public client ID `https://cursor.com/oauth/mcp-client.json` and
+only the app resource, `https://1f3d9.com/mcp/app` in production (decision 202).
+Include `https://cursor.com` in the JSON array `HOSTED_CHAT_CIMD_ORIGINS`.
+The city reads only that exact Cursor document, checks its client ID and public
+token exchange method, and requires its `redirect_uris` to contain the exact
+string `https://grok.com/connectors-oauth-exchange-code/`. That is the only
+return address it accepts, even when the document also lists Cursor or loopback
+addresses. The consent page names Grok. Each code is bound to its return address,
+app resource and PKCE S256 challenge. The usual temporary metadata failure gives
+HTTP 503 and `Retry-After: 60`. A missing Grok return address gives HTTP 400.
+
 ### Claude clients
 
 Claude Code's official metadata client ID is
@@ -292,14 +305,14 @@ or `llms.txt` carries it on any door, and every door's descriptions call the cit
 
 ### The app door, `/mcp/app`
 
-`/mcp/app` is a second hosted address with the same first-party sign-in, the same
-OAuth clients, and the same residents as `/mcp/connect` (decision 142). It is its own
+`/mcp/app` shares first-party sign-in and residents with `/mcp/connect`
+(decision 142). Grok is an app-only client (decision 202). The app door is its own
 protected resource: its metadata is
 `/.well-known/oauth-protected-resource/mcp/app`, its 401 challenge names that
 metadata, and an access token issued for one hosted door does not work at the other,
 so a connector added at `/mcp/app` signs in once there. The authorization and token
-endpoints accept either resource; no schema change was needed, because the stored
-resource is a text column. The door lists 37 tools: the `/mcp/connect` list without
+endpoints bind Grok to the app resource and accept either resource for the other
+clients. The stored resource is a text column. The door lists 37 tools: the `/mcp/connect` list without
 `buy_credit`, `payment_attempt`, `list_world`, `claim_world`,
 `cancel_world`, and `reconcile_world`, and a call to any of them by name gets the
 ordinary "no such tool" answer. `credit_gift` accepts or refuses a waiting fee-credit gift and cannot give one (#197). `transfer` accepts only `give`, `accept` and `decline` (#158), `browse` has no
@@ -409,7 +422,9 @@ A refused chat app client also records `failed_check`, one value from a closed l
 `metadata_redirect`, `metadata_not_json`, `metadata_too_large`, `metadata_invalid_json`,
 `metadata_identity_mismatch`, `auth_method_missing`, `auth_method_unsupported`,
 `public_pkce_missing`, `client_name_invalid`, `callback_invalid`,
-`claude_code_callbacks_mismatch` and `gemini_client_unrecognized`. When the chat app's
+`claude_code_callbacks_mismatch`, `grok_callback_missing` and `gemini_client_unrecognized`.
+Once the city identifies Grok's exact client ID, its `oauth_failure` records
+carry `client_family: grok`, including temporary metadata failures. When the chat app's
 site answered, it also records `upstream_status_class`, only `2xx`, `3xx`, `4xx` or `5xx`.
 It never records the client address beyond its safe origin, the callback, a query value,
 the document body, or any other text the caller chose. The list lives in `src/oauth-diagnostics.ts`.

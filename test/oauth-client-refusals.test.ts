@@ -47,7 +47,7 @@ function signinApp(fetcher: Fetcher, records: OAuthDiagnosticRecord[]): Hono {
   mountOAuthRoutes(app, {
     environment: {
       ...environment,
-      HOSTED_CHAT_CIMD_ORIGINS: JSON.stringify(['https://chatgpt.com', 'https://claude.ai']),
+      HOSTED_CHAT_CIMD_ORIGINS: JSON.stringify(['https://chatgpt.com', 'https://claude.ai', 'https://cursor.com']),
     },
     store: new MemoryOAuthStore().api,
     fetcher,
@@ -73,6 +73,7 @@ interface Expected {
   check: typeof CLIENT_REFUSAL_CHECKS[number]
   temporary: boolean
   statusClass?: '2xx' | '3xx' | '4xx' | '5xx'
+  family?: 'grok'
 }
 
 async function assertRefusal(
@@ -115,7 +116,7 @@ async function assertRefusal(
   assert.deepEqual(
     Object.keys(record).sort(),
     ['client_origin', 'elapsed_ms', 'error_class', 'event', 'failed_check', 'request_id', 'stage', 'status',
-      ...(expected.statusClass ? ['upstream_status_class'] : [])].sort(),
+      ...(expected.statusClass ? ['upstream_status_class'] : []), ...(expected.family ? ['client_family'] : [])].sort(),
     label,
   )
   assert.equal(record.stage, 'client_metadata', label)
@@ -179,6 +180,11 @@ test('every client refusal cause has its own closed log value, status, class and
       token_endpoint_auth_method: 'none',
     })), { check: 'claude_code_callbacks_mismatch', temporary: false, statusClass: '2xx' },
     CLAUDE_CODE_ID, 'http://127.0.0.1:54123/callback'],
+    ['the Grok return address is absent from the Cursor document', answer(() => json({
+      client_id: 'https://cursor.com/oauth/mcp-client.json', client_name: 'Cursor',
+      redirect_uris: ['https://www.cursor.com/agents/mcp/oauth/callback'], token_endpoint_auth_method: 'none',
+    })), { check: 'grok_callback_missing', temporary: false, statusClass: '2xx', family: 'grok' },
+    'https://cursor.com/oauth/mcp-client.json', 'https://grok.com/connectors-oauth-exchange-code/'],
   ]
   const seen = new Set<string>(['metadata_timeout'])
   for (const [label, fetcher, expected, clientId, redirectUri] of cases) {

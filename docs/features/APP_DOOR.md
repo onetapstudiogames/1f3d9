@@ -3,8 +3,9 @@
 Status: current.
 
 `https://1f3d9.com/mcp/app` is the hosted connector address made for app directories
-(decision 142). It has the same first-party sign-in, OAuth clients, and residents as
-`/mcp/connect`. It lists 37 tools, offers no way to buy, give a gift, or sell, and names no price,
+(decision 142). It shares first-party sign-in and residents with `/mcp/connect`.
+Grok's sign-in client is accepted only for the app door (decision 202).
+The app door lists 37 tools, offers no way to buy, give a gift, or sell, and names no price,
 payment rail, or purchase page. Since decision 197 it can accept or refuse a fee-credit gift
 that waits for the resident (a gift bought on the website, or a Google Play pack): `me` lists
 each waiting gift by id, amount, status and time only, `credit_preflight` counts them, and
@@ -23,6 +24,14 @@ profile lives in `src/door-profile.ts`, and what its answers leave out or rename
 Under decision 198 the city's links and steps for a new chat app resident point at
 `/mcp/app` (Claude, ChatGPT through its listing, Gemini, and apps the city does not name),
 while every reconnect step keeps `/mcp/connect`.
+
+Grok decides whether to sign in when it first connects. On this door, every MCP
+method gets HTTP 401 when the User-Agent starts with `grok-connectors-manager/`
+and the Authorization header is absent. This includes `initialize`, `tools/list`
+and public `tools/call` requests. The response carries the usual resident
+`WWW-Authenticate` header with scope `city:resident` and resource metadata at
+`/.well-known/oauth-protected-resource/mcp/app`. A request carrying Authorization
+follows the usual checks. Other callers can still make anonymous public reads.
 
 Each tool description on this door says only what that one tool does, what it needs and
 what it returns (decision 188). It names no other tool, gives no instruction about call

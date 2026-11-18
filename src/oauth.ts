@@ -25,6 +25,7 @@ import {
 } from './core.ts'
 import { publicText } from './input.ts'
 import {
+  GROK_CLIENT_ID,
   OAUTH_ACCESS_TOKEN_PREFIX,
   OAUTH_AUTHORIZATION_CODE_PREFIX,
   OAUTH_REFRESH_TOKEN_PREFIX,
@@ -715,7 +716,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
   if (!oauth) return
   const pairingEnabled = options.pairingEnabled === true
 
-  // Each hosted door names its own protected resource; both share one sign-in and one set of clients.
+  // Each hosted door publishes its own resource and points to the shared authorization server.
   const protectedResource = (door: HostedDoorName) => (c: Context) => {
     c.header('Access-Control-Allow-Origin', '*')
     return c.json({
@@ -824,7 +825,8 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
 
     let request
     try {
-      request = validateAuthorizationRequest(query, [client], oauth.resources)
+      const resources = clientId === GROK_CLIENT_ID ? oauthResourceFor('app', oauth.environment) : oauth.resources
+      request = validateAuthorizationRequest(query, [client], resources)
     } catch {
       recordFailure(oauth, trace, 'authorization_request', 'invalid_request', 400)
       return browserError(
