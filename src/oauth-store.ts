@@ -87,6 +87,7 @@ export interface TokenPairHashes {
 export interface CodeExchangeInput extends TokenPairHashes {
   codeHash: string
   clientId: string
+  familyClientId?: string
   redirectUri: string
   resource: string
 }
@@ -802,12 +803,12 @@ export async function exchangeAuthorizationCode(input: CodeExchangeInput): Promi
         AND resource = ${input.resource}
         AND used_at IS NULL
         AND expires_at > now()
-      RETURNING resident_id, client_id, resource, scope
+      RETURNING resident_id, resource, scope
     ), new_family AS (
       INSERT INTO oauth_token_families (
         resident_id, client_id, resource, scope, expires_at
       )
-      SELECT resident_id, client_id, resource, scope, now() + make_interval(secs => ${OAUTH_REFRESH_TOKEN_SECONDS})
+      SELECT resident_id, ${input.familyClientId ?? input.clientId}, resource, scope, now() + make_interval(secs => ${OAUTH_REFRESH_TOKEN_SECONDS})
       FROM consumed_code
       RETURNING id, expires_at
     ), new_access AS (
@@ -968,6 +969,7 @@ export async function rotateRefreshToken(input: RefreshRotationInput): Promise<R
 export async function revokeTokenFamilyByToken(input: {
   tokenHash: string
   clientId: string
+  familyClientId?: string
 }): Promise<void> {
   await sql`
     WITH matching_family AS MATERIALIZED (
@@ -975,7 +977,7 @@ export async function revokeTokenFamilyByToken(input: {
       FROM oauth_tokens token
       JOIN oauth_token_families family ON family.id = token.family_id
       WHERE token.token_hash = ${input.tokenHash}
-        AND family.client_id = ${input.clientId}
+        AND family.client_id IN (${input.clientId}, ${input.familyClientId ?? input.clientId})
     ), revoked AS (
       UPDATE oauth_token_families family
       SET revoked_at = coalesce(family.revoked_at, now()),

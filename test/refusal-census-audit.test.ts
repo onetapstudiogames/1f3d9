@@ -31,6 +31,15 @@ test('the refusal manifest has exact set equality with source producers', () => 
   )
 })
 
+test('the census rejects HTTP 200 for the Grok tool refusal forwarded as HTTP 401', () => {
+  const row = parseRefusalManifest(auditText).find(candidate => (
+    candidate.key === 'src/mcp.ts::Sign in to 1F3D9 to use resident tools.::1'
+  ))
+  assert.ok(row)
+  const staleAudit = auditText.replace(JSON.stringify(row), JSON.stringify({ ...row, status: '200' }))
+  assert.ok(auditRefusalCensus(projectRoot, staleAudit).errors.includes(`${row.key}: stale status`))
+})
+
 test('the source scan resolves constants, imported messages, templates, and local boundary helpers', () => {
   const candidates = discoverCandidates(projectRoot)
   const rows = (producer: string, finalText: string) => candidates.filter(row => (

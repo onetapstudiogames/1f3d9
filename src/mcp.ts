@@ -208,10 +208,11 @@ const connectorVisitOpening = () =>
 const protectedResourceMetadata = (profile: DoorProfile) =>
   `resource_metadata="${publicOrigin()}/.well-known/oauth-protected-resource${profile.path}"`
 
+const RESIDENT_SIGNIN_REQUIRED = 'Sign in to 1F3D9 to use resident tools.'
 const defaultOAuthChallenge = (profile: DoorProfile) =>
   `Bearer ${protectedResourceMetadata(profile)}, ` +
   `scope="${OAUTH_SCOPE}", error="invalid_token", ` +
-  'error_description="Sign in to 1F3D9 to use resident tools."'
+  `error_description="${RESIDENT_SIGNIN_REQUIRED}"`
 
 const publicMcpDoorAuthMessage = () =>
   `You are at the public 1F3D9 MCP door: ${publicOrigin()}/mcp. ` +
@@ -3131,6 +3132,17 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
   const hostedChat = profile.hostedChat
   const doorTools = DOOR_TOOLS[profile.name]
   const message = await c.req.json().catch(() => null)
+  // Grok decides whether to start sign-in during discovery. Tool calls still use the logged refusal below.
+  const grokChallenge = profile.name === 'app'
+    && c.req.header('authorization') === undefined
+    && c.req.header('user-agent')?.startsWith('grok-connectors-manager/')
+    ? defaultOAuthChallenge(profile)
+    : undefined
+  if (grokChallenge) {
+    c.header('Cache-Control', 'no-store')
+    c.header('WWW-Authenticate', grokChallenge)
+    if (message?.jsonrpc !== '2.0' || message.method !== 'tools/call') return c.body(null, 401)
+  }
   if (Array.isArray(message)) {
     return rpcError(
       c,
@@ -3263,6 +3275,13 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
   let toolResponse: Response
   try {
     toolResponse = await (async (): Promise<Response> => {
+      if (grokChallenge) {
+        return reply(
+          classifiedErrorText(RESIDENT_SIGNIN_REQUIRED, 'auth_required', 401, undefined, connectorRequestId),
+          true,
+          { oauthChallenge: grokChallenge, forwardUnauthorizedStatus: true },
+        )
+      }
       const requestedName = String(params?.name ?? '')
       const name = hostedChat && requestedName.startsWith(HOSTED_TOOL_NAMESPACE)
         ? requestedName.slice(HOSTED_TOOL_NAMESPACE.length)

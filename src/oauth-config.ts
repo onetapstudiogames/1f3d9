@@ -13,6 +13,12 @@ const MAX_CLIENT_ID = 2_048
 const MAX_CLIENT_NAME = 240
 const MAX_REDIRECT_URI = 4_096
 const CHATGPT_CIMD_ORIGIN = 'https://chatgpt.com'
+const CURSOR_CIMD_ORIGIN = 'https://cursor.com'
+export const GROK_CLIENT_ID = `${CURSOR_CIMD_ORIGIN}/oauth/mcp-client.json`
+export const GROK_CALLBACK = 'https://grok.com/connectors-oauth-exchange-code/'
+// A newline cannot occur in a public client ID. This private key records that
+// the grant is bound to the exact Grok callback.
+const CHECKED_GROK_CLIENT = `${GROK_CLIENT_ID}\n${GROK_CALLBACK}`
 const CLAUDE_CODE_CLIENT_ID = 'https://claude.ai/oauth/claude-code-client-metadata'
 const CLAUDE_CODE_CALLBACKS = ['http://localhost/callback', 'http://127.0.0.1/callback']
 const LOOPBACK_CALLBACK_PATH = '/callback'
@@ -284,6 +290,22 @@ export function oauthResources(environment: OAuthEnvironment = process.env): rea
   return Object.freeze([oauthResourceFor('connect', environment), oauthResourceFor('app', environment)])
 }
 
+/** Apply decision 202 to a grant after decision 190 has resolved its resource. */
+export function allowsClientGrant(
+  clientId: string, redirectUri: string, resource: string, environment: OAuthEnvironment,
+): boolean {
+  return publicOAuthClientId(clientId) !== GROK_CLIENT_ID ||
+    (redirectUri === GROK_CALLBACK && resource === oauthResourceFor('app', environment))
+}
+
+export function storedOAuthClientId(clientId: string): string {
+  return clientId === GROK_CLIENT_ID ? CHECKED_GROK_CLIENT : clientId
+}
+
+export function publicOAuthClientId(storedId: string): string {
+  return storedId === CHECKED_GROK_CLIENT ? GROK_CLIENT_ID : storedId
+}
+
 /** Decision 190: the query a chat app may add after a connector address, as in `/mcp/connect?2`. */
 const CONNECTOR_ADDRESS_SUFFIX = /^[A-Za-z0-9=&._~-]{1,128}$/u
 
@@ -346,7 +368,7 @@ export async function resolveOAuthClient(
 ): Promise<OAuthClient> {
   if (tokenLooksSensitive(clientId)) throw new OAuthClientRefusal('client_unknown')
   const configured = staticClients.find(client => client.clientId === clientId)
-  if (configured) return configured
+  if (configured && clientId !== GROK_CLIENT_ID) return configured
   if (clientId.length > MAX_CLIENT_ID) throw new OAuthClientRefusal('client_unknown')
 
   let metadataUrl: URL
@@ -360,12 +382,13 @@ export async function resolveOAuthClient(
     metadataUrl.username ||
     metadataUrl.password ||
     metadataUrl.pathname === '/' ||
-    !cimdOrigins.includes(metadataUrl.origin)
+    !cimdOrigins.includes(metadataUrl.origin) ||
+    (metadataUrl.origin === CURSOR_CIMD_ORIGIN && clientId !== GROK_CLIENT_ID)
   ) {
     throw new OAuthClientRefusal('client_unknown')
   }
   if (metadataUrl.search || metadataUrl.hash) throw new OAuthClientRefusal('client_address_query_or_fragment')
-  // Any client-metadata document on an allowlisted origin is read and held to
+  // Outside Cursor, any client-metadata document on an allowlisted origin is read and held to
   // exact https callbacks. Hosted Claude (claude.ai web, desktop, mobile, Cowork)
   // presents its own claude.ai document with an https callback and passes that
   // rule; only CLAUDE_CODE_CLIENT_ID is granted the loopback allowance below.
@@ -446,11 +469,24 @@ export async function resolveOAuthClient(
     throw new OAuthClientRefusal('client_name_invalid', answered)
   }
   const claudeCodeLoopback = clientId === CLAUDE_CODE_CLIENT_ID
+  let callbacks: string[]
+  try {
+    callbacks = stringArray(decoded.redirect_uris, 'redirect_uris')
+    if (clientId === GROK_CLIENT_ID) {
+      // Check every absolute URL, keeping the original strings for the exact callback match.
+      for (const callback of callbacks) new URL(text(callback, 'redirect URI', MAX_REDIRECT_URI))
+    }
+  } catch {
+    throw new OAuthClientRefusal('callback_invalid', answered)
+  }
+  if (clientId === GROK_CLIENT_ID) {
+    // Decision 202: this shared document also lists Cursor and local clients.
+    if (!callbacks.includes(GROK_CALLBACK)) throw new OAuthClientRefusal('grok_callback_missing', answered)
+    return { clientId, clientName: 'Grok', redirectUris: [GROK_CALLBACK] }
+  }
   let redirectUris: string[]
   try {
-    redirectUris = [...new Set(
-      stringArray(decoded.redirect_uris, 'redirect_uris').map(claudeCodeLoopback ? claudeCodeRedirect : exactHttpsRedirect),
-    )]
+    redirectUris = [...new Set(callbacks.map(claudeCodeLoopback ? claudeCodeRedirect : exactHttpsRedirect))]
   } catch {
     throw new OAuthClientRefusal('callback_invalid', answered)
   }

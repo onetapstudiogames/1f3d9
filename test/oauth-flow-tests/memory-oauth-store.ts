@@ -325,7 +325,7 @@ export class MemoryOAuthStore {
       const family: MemoryFamily = {
         id: this.nextFamilyId++,
         residentId: code.residentId,
-        clientId: code.clientId,
+        clientId: input.familyClientId ?? code.clientId,
         resource: code.resource,
         scope: code.scope,
         expiresAt: Date.now() + OAUTH_REFRESH_TOKEN_SECONDS * 1000,
@@ -396,7 +396,7 @@ export class MemoryOAuthStore {
     ): Promise<void> => {
       const token = this.tokens.get(input.tokenHash)
       const family = token ? this.families.get(token.familyId) : undefined
-      if (family?.clientId === input.clientId) this.revokeFamily(family.id)
+      if (family && (family.clientId === input.clientId || family.clientId === input.familyClientId)) this.revokeFamily(family.id)
     },
 
     resolveOAuthAccessToken: async (

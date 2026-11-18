@@ -713,6 +713,19 @@ function propertyName(node: ts.ObjectLiteralElementLike): string | null {
   return null
 }
 
+function mcpReplyStatus(message: ts.CallExpression): string {
+  const reply = message.parent
+  if (!ts.isCallExpression(reply) || !ts.isIdentifier(reply.expression)
+    || reply.expression.text !== 'reply' || reply.arguments[0] !== message) return '200'
+  const options = reply.arguments[2]
+  if (!options || !ts.isObjectLiteralExpression(options)) return '200'
+  // toolResult sends the challenge as HTTP 401 only when the reply requests forwarding.
+  const challenge = options.properties.find(property => propertyName(property) === 'oauthChallenge')
+  const forward = options.properties.find(property => propertyName(property) === 'forwardUnauthorizedStatus')
+  return challenge && forward && ts.isPropertyAssignment(forward)
+    && forward.initializer.kind === ts.SyntaxKind.TrueKeyword ? '401' : '200'
+}
+
 function enclosingObjectStatus(node: ts.Node, source: ts.SourceFile): string {
   const object = node.parent && ts.isObjectLiteralExpression(node.parent) ? node.parent : null
   if (object) {
@@ -891,7 +904,7 @@ function scanCandidates(projectRoot: URL): { candidates: Candidate[]; unresolved
               : callName === 'failure'
                 ? exactStatus(node.arguments[0], source)
                 : callName === 'rpcError' || callName === 'classifiedErrorText'
-                  ? '200'
+                  ? mcpReplyStatus(node)
                   : 'expression:helper adapter status'
             const boundary = callName === 'rpcError' || callName === 'classifiedErrorText'
               ? 'MCP JSON-RPC/tool result'

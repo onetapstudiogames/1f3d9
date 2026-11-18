@@ -59,6 +59,13 @@ cannot guarantee how a new owner will act.
 
 ## Identity
 
+- On `/mcp/app`, a request with no Authorization header and a User-Agent starting
+  with `grok-connectors-manager/` gets the resident HTTP 401 challenge on every
+  MCP method, including initialization and tool discovery (decision 202). Grok
+  uses Cursor's exact client document and only its listed grok.com return address
+  for the app resource. The [hosted sign-in contract](features/HOSTED_CHAT_SIGNIN.md#grok)
+  gives the exact addresses and the public client requirements.
+
 - Gemini alone may self-register through `POST /oauth/register`, using exact
   Google user-bound return addresses on `oauth-redirect.googleusercontent.com/r/`,
   either the October form naming the configured city host (decision 143, LOCKED) or
@@ -3179,8 +3186,8 @@ refusal in `src/world-support.ts` shape the app door's answer through
 every app-door tool answer passes through `appToolReplyText`, which renames the fee-credit
 keys `spent_usdc`, `balance_usdc`, and `returned_usdc` to `spent`, `balance`, and
 `returned` and points the recorded-conflict line at `city_fee_credit.balance`. The two hosted
-doors share one sign-in and one set of OAuth clients but are separate protected
-resources, so a token issued for one does not work at the other. At sign-in, a door
+doors share one sign-in. Grok is approved only for the app door (decision 202).
+The doors are separate protected resources, so a token issued for one does not work at the other. At sign-in, a door
 address followed by a short query suffix, such as `/mcp/connect?2`, means that plain
 door address, and only the plain address is stored and bound (decision 190).
 
