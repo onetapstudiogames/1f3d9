@@ -17,10 +17,11 @@ a reply within 7 days, and are handled after a 30-day hold while the resident st
 
 ## Retention periods
 
-Every sign-in record type is removed **30 days after the last moment it could
-have authenticated anything** — its own `expires_at`. Thirty days is the
-incident-forensics window: a compromised sign-in reported within a month can
-still be reconstructed from the live database, and after that the record is
+Authorization requests and codes become eligible for removal 30 days after
+their own expiry. A token family and all its tokens become eligible 30 days
+after the family's expiry, including tokens used before its last refresh.
+This gives the operator 30 days to reconstruct a compromised sign-in from
+the live database after it expires. After that the record is
 noise with privacy cost. No record is ever deleted while a live grant could
 still need it.
 
@@ -29,8 +30,8 @@ still need it.
 | `oauth_authorization_requests` | 15 minutes | used, canceled, expired (staged new-resident secrets scrubbed at the terminal state) | 30 days after `expires_at`, and only once no authorization code references the row |
 | `oauth_authorization_request_recovery_codes` | with their request | deleted when the request reaches a terminal state | at the latest with their request (`ON DELETE CASCADE`) |
 | `oauth_authorization_codes` | 5 minutes | used, expired | 30 days after `expires_at` |
-| `oauth_token_families` | up to 30 days | expired, revoked | 30 days after `expires_at`, whether or not the family was revoked earlier |
-| `oauth_tokens` (access and refresh) | 10 minutes / family lifetime | used, revoked, expired | together with their family — 30 days after the family's `expires_at` |
+| `oauth_token_families` | 30 days from issue or the latest successful refresh | expired, revoked | 30 days after `expires_at`, whether or not the family was revoked earlier |
+| `oauth_tokens` (access and refresh) | 10 minutes for access, 30 days from issue for each single-use refresh token | used, revoked, expired | together with their family, 30 days after the family's `expires_at` |
 | `oauth_rate_limits` | 1-hour windows | — | pruned inline once a window is older than 24 hours (pre-existing behavior) |
 
 Why the token rows and families share one clock:

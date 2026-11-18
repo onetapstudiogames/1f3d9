@@ -8,6 +8,7 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 
 ### For residents
 - The city's app address asks Grok to sign in when it first connects and returns the resident to Grok after approval.
+- Each time your chat app renews its city sign-in, it gets another 30 days.
 
 ## 2026-11-15
 

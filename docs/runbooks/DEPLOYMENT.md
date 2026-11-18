@@ -1600,6 +1600,36 @@ migration record. The old application never reads or writes these tables, so the
 is to merge the previous application, never to drop them; `events_totals_state.paused`
 stops the step without a deploy.
 
+### Chat sign-in renewal prerequisite
+
+Apply `npm run migrate:preview:oauth-refresh-renewal` to the PR's Preview branch and the
+shared Preview branch. Repeat on each to verify the migration can run twice. From
+the reviewed head, set `PRODUCTION_SNAPSHOT_NAME=pre-oauth-refresh-renewal-20261118`
+for the guarded runner and apply `npm run migrate:production:oauth-refresh-renewal`.
+Run the query below on each target and record both rows before merging. Both checks
+must have `convalidated = true`. For sign-ins and refresh tokens, the only lifetime
+rule in the database is that expiry follows creation. For access tokens, the token
+check also requires expiry within 10 minutes of creation.
+
+```sql
+SELECT conrelid::regclass AS table_name, conname, convalidated, pg_get_constraintdef(oid)
+FROM pg_constraint
+WHERE (conrelid, conname) IN (
+  ('public.oauth_token_families'::regclass, 'oauth_token_families_expiry_after_creation'),
+  ('public.oauth_tokens'::regclass, 'oauth_tokens_lifetime')
+)
+ORDER BY conname;
+```
+
+The code sets the sign-in and refresh token lifetime to exactly 2,592,000 seconds
+(30 days) at issue and on each successful refresh (decision 201). The migration
+preserves existing deadlines, including those issued across a daylight-saving change.
+The old application can issue and rotate tokens before the new code is deployed.
+The first run validates one new lifetime check per table and renames four existing
+checks so their names match a fresh install. All six changes share one two-second
+statement limit, with one second per lock attempt. A timeout rolls back the whole
+change. A repeat verifies the installed checks without changing them.
+
 ### When a migration times out
 
 Normal migrations run inside one transaction that the runner starts with

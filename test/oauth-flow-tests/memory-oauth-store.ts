@@ -1,4 +1,5 @@
 import { sha256, type Resident } from '../../src/core.ts'
+import { OAUTH_ACCESS_TOKEN_SECONDS, OAUTH_REFRESH_TOKEN_SECONDS } from '../../src/oauth-limits.ts'
 import type {
   ActiveAuthorizationRequest,
   AuthorizationCodeRecord,
@@ -327,11 +328,11 @@ export class MemoryOAuthStore {
         clientId: input.familyClientId ?? code.clientId,
         resource: code.resource,
         scope: code.scope,
-        expiresAt: Date.now() + 30 * 24 * 60 * 60_000,
+        expiresAt: Date.now() + OAUTH_REFRESH_TOKEN_SECONDS * 1000,
         revoked: false,
       }
       this.families.set(family.id, family)
-      this.addToken(input.accessTokenHash, 'access', family.id, Date.now() + 10 * 60_000)
+      this.addToken(input.accessTokenHash, 'access', family.id, Date.now() + OAUTH_ACCESS_TOKEN_SECONDS * 1000)
       this.addToken(input.refreshTokenHash, 'refresh', family.id, family.expiresAt)
       return true
     },
@@ -360,8 +361,11 @@ export class MemoryOAuthStore {
           family.resource !== input.resource
         ) return 'invalid' as const
         token.used = true
-        this.addToken(input.accessTokenHash, 'access', family.id, Date.now() + 10 * 60_000)
-        this.addToken(input.newRefreshTokenHash, 'refresh', family.id, family.expiresAt)
+        const now = Date.now()
+        const expiresAt = now + OAUTH_REFRESH_TOKEN_SECONDS * 1000
+        this.families.set(family.id, { ...family, expiresAt })
+        this.addToken(input.accessTokenHash, 'access', family.id, Math.min(now + OAUTH_ACCESS_TOKEN_SECONDS * 1000, expiresAt))
+        this.addToken(input.newRefreshTokenHash, 'refresh', family.id, expiresAt)
         return 'rotated' as const
       } finally {
         this.refreshRotations.delete(rotationKey)

@@ -6,7 +6,7 @@ import {
   type Resident,
 } from './core.ts'
 import { PAIRING_LIMITS } from './pairing-limits.ts'
-import { OAUTH_LIMITS } from './oauth-limits.ts'
+import { OAUTH_LIMITS, OAUTH_REFRESH_TOKEN_SECONDS } from './oauth-limits.ts'
 import { WORLD_ROOT_NAME } from './world-root.ts'
 
 export type OAuthAttemptKind = 'authorize' | 'resident_key' | 'token' | 'refresh' | 'revoke' | 'pair_mint'
@@ -808,9 +808,9 @@ export async function exchangeAuthorizationCode(input: CodeExchangeInput): Promi
       INSERT INTO oauth_token_families (
         resident_id, client_id, resource, scope, expires_at
       )
-      SELECT resident_id, ${input.familyClientId ?? input.clientId}, resource, scope, now() + make_interval(days => ${OAUTH_LIMITS.refreshTokenDays})
+      SELECT resident_id, ${input.familyClientId ?? input.clientId}, resource, scope, now() + make_interval(secs => ${OAUTH_REFRESH_TOKEN_SECONDS})
       FROM consumed_code
-      RETURNING id
+      RETURNING id, expires_at
     ), new_access AS (
       INSERT INTO oauth_tokens (token_hash, token_type, family_id, expires_at)
       SELECT ${input.accessTokenHash}, 'access', id, now() + make_interval(mins => ${OAUTH_LIMITS.accessTokenMinutes})
@@ -818,7 +818,7 @@ export async function exchangeAuthorizationCode(input: CodeExchangeInput): Promi
       RETURNING id
     ), new_refresh AS (
       INSERT INTO oauth_tokens (token_hash, token_type, family_id, expires_at)
-      SELECT ${input.refreshTokenHash}, 'refresh', id, now() + make_interval(days => ${OAUTH_LIMITS.refreshTokenDays})
+      SELECT ${input.refreshTokenHash}, 'refresh', id, expires_at
       FROM new_family
       RETURNING id
     )
@@ -909,52 +909,55 @@ export async function rotateRefreshToken(input: RefreshRotationInput): Promise<R
       SELECT pg_try_advisory_xact_lock(
         hashtextextended(${input.presentedRefreshTokenHash}, 271828)
       ) AS acquired
-    ), consumed_refresh AS (
-      UPDATE oauth_tokens token
-      SET used_at = now()
-      FROM oauth_token_families family, refresh_lock
-      WHERE token.family_id = family.id
-        AND refresh_lock.acquired
+    ), locked_grant AS MATERIALIZED (
+      SELECT token.id, token.expires_at AS token_end, family.expires_at AS family_end
+      FROM residents resident
+      JOIN oauth_token_families family ON family.resident_id = resident.id
+      JOIN oauth_tokens token ON token.family_id = family.id
+      CROSS JOIN refresh_lock
+      WHERE refresh_lock.acquired
         AND token.token_hash = ${input.presentedRefreshTokenHash}
         AND token.token_type = 'refresh'
         AND token.used_at IS NULL
         AND token.revoked_at IS NULL
-        AND token.expires_at > now()
         AND family.client_id = ${input.clientId}
         AND family.resource = ${input.resource}
         AND family.revoked_at IS NULL
-        AND family.expires_at > now()
-      RETURNING token.id, token.family_id
-    ), new_access AS (
-      INSERT INTO oauth_tokens (token_hash, token_type, family_id, expires_at)
-      SELECT ${input.accessTokenHash}, 'access', consumed.family_id,
-        LEAST(now() + make_interval(mins => ${OAUTH_LIMITS.accessTokenMinutes}), family.expires_at)
+      FOR KEY SHARE OF resident
+      FOR NO KEY UPDATE OF family, token
+    ), timed_grant AS MATERIALIZED (
+      -- The write triggers also lock the resident. Sample once all three rows are locked.
+      SELECT locked_grant.*, clock_timestamp() AS refreshed_at FROM locked_grant
+    ), consumed_refresh AS (
+      UPDATE oauth_tokens token
+      SET used_at = grant_row.refreshed_at
+      FROM timed_grant grant_row
+      WHERE token.id = grant_row.id
+        AND grant_row.token_end > grant_row.refreshed_at
+        AND grant_row.family_end > grant_row.refreshed_at
+      RETURNING token.id, token.family_id, token.used_at
+    ), renewed_family AS (
+      UPDATE oauth_token_families family
+      SET expires_at = consumed.used_at + make_interval(secs => ${OAUTH_REFRESH_TOKEN_SECONDS})
       FROM consumed_refresh consumed
-      JOIN oauth_token_families family ON family.id = consumed.family_id
+      WHERE family.id = consumed.family_id
+      RETURNING family.id, family.expires_at, consumed.id AS previous_token_id, consumed.used_at
+    ), new_access AS (
+      INSERT INTO oauth_tokens (token_hash, token_type, family_id, created_at, expires_at)
+      SELECT ${input.accessTokenHash}, 'access', id, used_at,
+        LEAST(used_at + make_interval(mins => ${OAUTH_LIMITS.accessTokenMinutes}), expires_at)
+      FROM renewed_family
       RETURNING id
     ), new_refresh AS (
       INSERT INTO oauth_tokens (
-        token_hash, token_type, family_id, rotated_from_token_id, expires_at
+        token_hash, token_type, family_id, rotated_from_token_id, created_at, expires_at
       )
-      SELECT ${input.newRefreshTokenHash}, 'refresh', consumed.family_id, consumed.id,
-        family.expires_at
-      FROM consumed_refresh consumed
-      JOIN oauth_token_families family ON family.id = consumed.family_id
+      SELECT ${input.newRefreshTokenHash}, 'refresh', id, previous_token_id, used_at, expires_at
+      FROM renewed_family
       RETURNING id
-    ), shortened_family AS (
-      UPDATE oauth_token_families family
-      SET expires_at = family.expires_at
-      FROM consumed_refresh
-      WHERE family.id = consumed_refresh.family_id
-      RETURNING family.id
     )
     SELECT refresh_lock.acquired AS lock_acquired,
-      EXISTS (
-        SELECT 1 FROM consumed_refresh
-        WHERE EXISTS (SELECT 1 FROM new_access)
-          AND EXISTS (SELECT 1 FROM new_refresh)
-          AND EXISTS (SELECT 1 FROM shortened_family)
-      ) AS rotated
+      (EXISTS (SELECT 1 FROM new_access) AND EXISTS (SELECT 1 FROM new_refresh)) AS rotated
     FROM refresh_lock
   `) as { lock_acquired: boolean; rotated: boolean }[]
   const attempt = rows[0]
