@@ -108,10 +108,12 @@ cannot guarantee how a new owner will act.
   permit form navigation through exactly `https://platform.openai.com`, which OpenAI's
   plugin submission callback uses after ChatGPT. The initial return still uses the exact
   registered callback, and other clients receive no additional browser allowance.
-- For every chat app on `/mcp/connect` and `/mcp/app`, a sign-in expires 30 days after
-  issue unless the app refreshes it. Each successful refresh sets the sign-in and its new
-  refresh token to expire 30 days from that refresh by the database clock (decision #201).
-  The new access token lasts 10 minutes. An expired sign-in requires a new sign-in.
+- For every chat app on `/mcp/connect` and `/mcp/app`, the code sets the sign-in and
+  refresh token to expire together exactly 2,592,000 seconds (30 days) after issue or
+  the last successful refresh (decision #201). A waiting refresh uses the database
+  clock after it gets the locks. If the sign-in has ended, the app must sign in again.
+  For sign-ins and refresh tokens, the database checks only that expiry follows
+  creation. For access tokens, it also caps the lifetime at 10 minutes.
 - Each live OAuth token family (one connector connection) has its own 3,600-attempt
   UTC-hour refresh allowance (decision #138; it was 120 under #63). Malformed, unknown, expired, and revoked refresh requests
   use a separate per-network junk allowance, so they cannot consume a live connection's

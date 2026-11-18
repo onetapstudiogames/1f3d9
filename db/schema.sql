@@ -448,7 +448,7 @@ CREATE TABLE IF NOT EXISTS oauth_token_families (
   revoke_reason TEXT CHECK (revoke_reason IS NULL OR octet_length(revoke_reason) <= 120),
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   CONSTRAINT oauth_token_families_expiry_after_creation CHECK (expires_at > created_at),
-  CHECK (revoked_at IS NULL OR revoked_at >= created_at)
+  CONSTRAINT oauth_token_families_revocation_time CHECK (revoked_at IS NULL OR revoked_at >= created_at)
 );
 CREATE INDEX IF NOT EXISTS oauth_token_families_resident
   ON oauth_token_families (resident_id, created_at DESC);
@@ -468,16 +468,13 @@ CREATE TABLE IF NOT EXISTS oauth_tokens (
   used_at               TIMESTAMPTZ,
   revoked_at            TIMESTAMPTZ,
   created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
-  CHECK (
+  CONSTRAINT oauth_tokens_lifetime CHECK (
     expires_at > created_at
-    AND expires_at <= created_at + CASE token_type
-      WHEN 'access' THEN INTERVAL '10 minutes'
-      ELSE INTERVAL '30 days'
-    END
+    AND (token_type <> 'access' OR expires_at <= created_at + INTERVAL '10 minutes')
   ),
-  CHECK (used_at IS NULL OR used_at >= created_at),
-  CHECK (revoked_at IS NULL OR revoked_at >= created_at),
-  CHECK (rotated_from_token_id IS NULL OR token_type = 'refresh')
+  CONSTRAINT oauth_tokens_use_time CHECK (used_at IS NULL OR used_at >= created_at),
+  CONSTRAINT oauth_tokens_revocation_time CHECK (revoked_at IS NULL OR revoked_at >= created_at),
+  CONSTRAINT oauth_tokens_rotation_type CHECK (rotated_from_token_id IS NULL OR token_type = 'refresh')
 );
 CREATE INDEX IF NOT EXISTS oauth_tokens_family
   ON oauth_tokens (family_id, token_type, created_at DESC);

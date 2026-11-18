@@ -8,12 +8,14 @@ import { registerRegistrationConfirmationTests } from './oauth-tests/registratio
 import { registerAuthorizationCodeAndAccessTests } from './oauth-tests/authorization-code-and-access.ts'
 import { registerRefreshAndRevocationTests } from './oauth-tests/refresh-and-revocation.ts'
 import { registerRefreshRenewalTests } from './oauth-tests/refresh-renewal.ts'
+import { registerRefreshClockTests } from './oauth-tests/refresh-clock.ts'
 import { registerRateLimitsAndRetentionTests } from './oauth-tests/rate-limits-and-retention.ts'
 import { registerRetentionTokenWalkTests } from './oauth-tests/retention-token-walk.ts'
 
 test('OAuth authorization writes roll back atomically in PostgreSQL', async t => {
   await withOAuthPostgres(async store => {
     await registerRefreshRenewalTests(t, store)
+    await registerRefreshClockTests(t, store)
     await registerRegistrationStagingTests(t, store)
     await registerCredentialRefusalsTests(t, store)
     await registerRequestLifecycleTests(t, store)

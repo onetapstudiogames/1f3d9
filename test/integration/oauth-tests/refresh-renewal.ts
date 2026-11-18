@@ -9,14 +9,13 @@ import { OAUTH_LIMITS } from '../../../src/oauth-limits.ts'
 import { database, resetDatabase, sha256, type OAuthStore } from '../../helpers/oauth-postgres-fixtures/postgres.ts'
 
 const origin = 'https://1f3d9.com'
-const familyTable = /CREATE TABLE IF NOT EXISTS oauth_token_families \([\s\S]*?\n\);/u
 
-async function familyChecks() {
+async function oauthConstraints() {
   return (await database!.query(
-    `SELECT convalidated, pg_get_constraintdef(oid) AS definition,
-       conname = 'oauth_token_families_expiry_after_creation' AS named_expiry
-     FROM pg_constraint WHERE conrelid = 'oauth_token_families'::regclass
-     ORDER BY definition`,
+    `SELECT oid, conrelid::regclass::text AS table_name, conname, convalidated,
+       pg_get_constraintdef(oid) AS definition FROM pg_constraint
+     WHERE conrelid IN ('oauth_token_families'::regclass, 'oauth_tokens'::regclass)
+     ORDER BY table_name, definition`,
   )).rows
 }
 
@@ -25,19 +24,35 @@ async function installPreviousSchema() {
   const original = await readFile(
     new URL('../../../db/migrations/20260813_hosted_chat_signin.sql', import.meta.url), 'utf8',
   )
-  const table = original.match(familyTable)?.[0]
-  assert.ok(table && familyTable.test(current))
+  let previous = current
+  for (const name of ['oauth_token_families', 'oauth_tokens']) {
+    const pattern = new RegExp(`CREATE TABLE IF NOT EXISTS ${name} \\([\\s\\S]*?\\n\\);`, 'u')
+    const table = original.match(pattern)?.[0]
+    assert.ok(table && pattern.test(current))
+    previous = previous.replace(pattern, () => table)
+  }
   await database!.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public')
-  await database!.query(current.replace(familyTable, table))
-  // Rename only after CREATE so all constraints get main's original generated names.
+  await database!.query(previous)
+  // Deliberately use nonstandard names for both old life checks.
   const { rows } = await database!.query<{ statement: string }>(`
-    SELECT format('ALTER TABLE oauth_token_families RENAME CONSTRAINT %I TO test_original_expiry', conname) AS statement
-    FROM pg_constraint WHERE conrelid = 'oauth_token_families'::regclass AND contype = 'c'
+    SELECT format('ALTER TABLE %s RENAME CONSTRAINT %I TO test_original_expiry', conrelid::regclass, conname) AS statement
+    FROM pg_constraint WHERE conrelid IN ('oauth_token_families'::regclass, 'oauth_tokens'::regclass) AND contype = 'c'
       AND pg_get_constraintdef(oid) LIKE '%30 days%'`)
-  assert.equal(rows.length, 1)
-  await database!.query(rows[0]!.statement)
+  assert.equal(rows.length, 2)
+  for (const row of rows) await database!.query(row.statement)
   await database!.query(`INSERT INTO residents (id, handle, model, secret_hash)
     VALUES (1, 'renewal-agent', 'integration-test', $1)`, [sha256('renewal-agent')])
+  // Main allowed a 721-hour refresh token when a 30-day window crossed the fall clock change.
+  await database!.query(`BEGIN;
+    SET LOCAL TIME ZONE 'America/New_York';
+    WITH family AS (
+      INSERT INTO oauth_token_families (resident_id, client_id, resource, scope, created_at, expires_at)
+      VALUES (1, 'legacy-fall', 'https://1f3d9.com/mcp/app', 'city:resident',
+        '2026-10-20 12:00'::timestamptz, '2026-11-19 12:00'::timestamptz)
+      RETURNING id, created_at, expires_at
+    ) INSERT INTO oauth_tokens (token_hash, token_type, family_id, created_at, expires_at)
+      SELECT repeat('f', 64), 'refresh', id, created_at, expires_at FROM family;
+    COMMIT`)
 }
 
 async function seedSignIn(clientId: string, resource: string, remainingMinutes: number) {
@@ -79,8 +94,9 @@ async function checkRenewal(app: Hono, signIn: SignIn, previous: string): Promis
   assert.equal(tokens.refresh_token_expires_in, OAUTH_LIMITS.refreshTokenDays * 24 * 60 * 60)
   const { rows } = await database!.query(
     `SELECT family.created_at::text AS signed_in,
-       family.expires_at = previous.used_at + make_interval(days => $4) AS renewed,
+       family.expires_at = previous.used_at + make_interval(secs => $4) AS renewed,
        refresh.expires_at = family.expires_at AS refresh_agrees,
+       refresh.created_at = previous.used_at AND access.created_at = previous.used_at AS same_start,
        access.expires_at = previous.used_at + make_interval(mins => $5) AS full_access_life,
        access.expires_at <= family.expires_at AS access_bounded
      FROM oauth_tokens previous
@@ -89,10 +105,11 @@ async function checkRenewal(app: Hono, signIn: SignIn, previous: string): Promis
      JOIN oauth_tokens access ON access.family_id = family.id AND access.token_type = 'access'
      WHERE previous.token_hash = $1 AND refresh.token_hash = $2 AND access.token_hash = $3`,
     [sha256(previous), sha256(tokens.refresh_token), sha256(tokens.access_token),
-      OAUTH_LIMITS.refreshTokenDays, OAUTH_LIMITS.accessTokenMinutes],
+      tokens.refresh_token_expires_in, OAUTH_LIMITS.accessTokenMinutes],
   )
   assert.deepEqual(rows, [{
-    signed_in: signIn.createdAt, renewed: true, refresh_agrees: true, full_access_life: true, access_bounded: true,
+    signed_in: signIn.createdAt, renewed: true, refresh_agrees: true, same_start: true,
+    full_access_life: true, access_bounded: true,
   }])
   return tokens.refresh_token
 }
@@ -103,17 +120,16 @@ async function checkMigration() {
     `SELECT to_jsonb(f) AS family, f.xmin, to_jsonb(t) AS token, t.xmin AS token_xmin
      FROM oauth_token_families f JOIN oauth_tokens t ON t.family_id = f.id ORDER BY f.id`,
   )).rows
-  const identities = async () => (await database!.query(
-    `SELECT oid, conname FROM pg_constraint WHERE conrelid = 'oauth_token_families'::regclass ORDER BY conname`,
-  )).rows
   const before = await records()
-  const others = (await identities()).filter(row => row.conname !== 'test_original_expiry')
+  const retained = (await oauthConstraints()).filter(row => row.conname !== 'test_original_expiry')
   await database!.query(ddl)
   assert.deepEqual(await records(), before)
-  const installed = await identities()
-  assert.deepEqual(installed.filter(row => row.conname !== 'oauth_token_families_expiry_after_creation'), others)
+  const installed = await oauthConstraints()
+  for (const row of retained) {
+    assert.equal(installed.find(check => check.oid === row.oid)?.definition, row.definition)
+  }
   await database!.query(ddl)
-  assert.deepEqual(await identities(), installed, 'rerunning must keep the same constraints, including their OIDs')
+  assert.deepEqual(await oauthConstraints(), installed, 'rerunning must keep the same constraints, including their OIDs')
   assert.deepEqual(await records(), before)
   await assert.rejects(database!.query('UPDATE oauth_token_families SET expires_at = created_at'), {
     code: '23514', constraint: 'oauth_token_families_expiry_after_creation',
@@ -122,7 +138,7 @@ async function checkMigration() {
 
 export async function registerRefreshRenewalTests(t: TestContext, store: OAuthStore): Promise<void> {
   await resetDatabase()
-  const freshChecks = await familyChecks()
+  const freshChecks = (await oauthConstraints()).map(({ oid, ...constraint }) => constraint)
   await installPreviousSchema()
   const environment = { HOSTED_CHAT_SIGNIN_ENABLED: 'true', GEMINI_DCR_SIGNING_KEY: randomBytes(32).toString('hex') }
   const gemini = registerGeminiClient(['https://oauth-redirect.googleusercontent.com/r/user_bound_custom-mcp-17-1f3d9_com'], environment)
@@ -145,7 +161,24 @@ export async function registerRefreshRenewalTests(t: TestContext, store: OAuthSt
   const idle = await seedSignIn('idle-client', `${origin}/mcp/app`, -1)
   await t.test('the renewal migration preserves sign-ins, matches a fresh schema and runs twice', async () => {
     await checkMigration()
-    assert.deepEqual(await familyChecks(), freshChecks)
+    const upgraded = (await oauthConstraints()).map(({ oid, ...constraint }) => constraint)
+    assert.deepEqual(upgraded, freshChecks)
+  })
+  await t.test('the migrated database preserves legacy refresh lives and caps only access at 10 minutes', async () => {
+    const token = `FROM oauth_tokens WHERE token_hash = repeat('f', 64)`
+    const { rows } = await database!.query(`SELECT EXTRACT(EPOCH FROM expires_at - created_at)::int AS seconds ${token}`)
+    assert.deepEqual(rows, [{ seconds: 30 * 86400 + 3600 }])
+    const insert = (kind: string, seconds: number) => database!.query(
+      `INSERT INTO oauth_tokens (token_hash, token_type, family_id, created_at, expires_at)
+       SELECT $1, $2, family_id, created_at, created_at + make_interval(secs => $3) ${token}`,
+      [randomBytes(32).toString('hex'), kind, seconds],
+    )
+    const invalidLife = { code: '23514', constraint: 'oauth_tokens_lifetime' }
+    await assert.rejects(insert('refresh', 0), invalidLife)
+    await assert.rejects(insert('access', 0), invalidLife)
+    await insert('access', 600)
+    await assert.rejects(insert('access', 601), invalidLife)
+    await insert('refresh', 31 * 86400)
   })
   await t.test('each refresh sets a new full lifetime for every client on both hosted doors', async () => {
     for (const signIn of active) {
