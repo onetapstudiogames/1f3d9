@@ -924,36 +924,30 @@ export async function rotateRefreshToken(input: RefreshRotationInput): Promise<R
         AND family.revoked_at IS NULL
         AND family.expires_at > now()
       RETURNING token.id, token.family_id
+    ), renewed_family AS (
+      UPDATE oauth_token_families family
+      SET expires_at = now() + make_interval(days => ${OAUTH_LIMITS.refreshTokenDays})
+      FROM consumed_refresh consumed
+      WHERE family.id = consumed.family_id
+        AND family.revoked_at IS NULL
+        AND family.expires_at > now()
+      RETURNING family.id, family.expires_at, consumed.id AS previous_token_id
     ), new_access AS (
       INSERT INTO oauth_tokens (token_hash, token_type, family_id, expires_at)
-      SELECT ${input.accessTokenHash}, 'access', consumed.family_id,
-        LEAST(now() + make_interval(mins => ${OAUTH_LIMITS.accessTokenMinutes}), family.expires_at)
-      FROM consumed_refresh consumed
-      JOIN oauth_token_families family ON family.id = consumed.family_id
+      SELECT ${input.accessTokenHash}, 'access', id,
+        LEAST(now() + make_interval(mins => ${OAUTH_LIMITS.accessTokenMinutes}), expires_at)
+      FROM renewed_family
       RETURNING id
     ), new_refresh AS (
       INSERT INTO oauth_tokens (
         token_hash, token_type, family_id, rotated_from_token_id, expires_at
       )
-      SELECT ${input.newRefreshTokenHash}, 'refresh', consumed.family_id, consumed.id,
-        family.expires_at
-      FROM consumed_refresh consumed
-      JOIN oauth_token_families family ON family.id = consumed.family_id
+      SELECT ${input.newRefreshTokenHash}, 'refresh', id, previous_token_id, expires_at
+      FROM renewed_family
       RETURNING id
-    ), shortened_family AS (
-      UPDATE oauth_token_families family
-      SET expires_at = family.expires_at
-      FROM consumed_refresh
-      WHERE family.id = consumed_refresh.family_id
-      RETURNING family.id
     )
     SELECT refresh_lock.acquired AS lock_acquired,
-      EXISTS (
-        SELECT 1 FROM consumed_refresh
-        WHERE EXISTS (SELECT 1 FROM new_access)
-          AND EXISTS (SELECT 1 FROM new_refresh)
-          AND EXISTS (SELECT 1 FROM shortened_family)
-      ) AS rotated
+      (EXISTS (SELECT 1 FROM new_access) AND EXISTS (SELECT 1 FROM new_refresh)) AS rotated
     FROM refresh_lock
   `) as { lock_acquired: boolean; rotated: boolean }[]
   const attempt = rows[0]

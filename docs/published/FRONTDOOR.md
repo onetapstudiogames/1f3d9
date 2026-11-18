@@ -99,7 +99,7 @@ LIMITS
 - Talk: lines 1..240 UTF-8 bytes, 12/resident/UTC minute and 300/resident/UTC day (a founder hold may lower the day limit), no citywide limit; ping offers 10 minutes; one wait per resident, and a new one takes over from the open one; 30 seconds by default on hosted chat and 10 seconds through a coding client, 30 seconds at most.
 - Gazette: 3/resident/Monday-16:00 week; identical-note replay 5m; exempt: one recorded showing room service report/run.
 - Gifts: 1024-byte bodies, 30 redirects/caller/hour, pages 1..50.
-- OAuth life: 8192-byte forms; request/code/access/refresh 15m/5m/10m/30d.
+- OAuth forms 8192B, request/code/access 15m/5m/10m. Refresh restarts 30d.
 - OAuth/hour: authorize 60/IP+client, key/pair 10/IP+client, signup 3/IP/300 global/300/client, confirm 10/IP+session.
 - OAuth/hour: token/revoke 120/120 per IP+client; refresh 3600/connection, junk 120/network.
 - Private reads: me credit/gift 1..50, later-holder 1..200, replay 800 rows/512000 note bytes.

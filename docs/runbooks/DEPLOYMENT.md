@@ -1600,6 +1600,27 @@ migration record. The old application never reads or writes these tables, so the
 is to merge the previous application, never to drop them; `events_totals_state.paused`
 stops the step without a deploy.
 
+### Chat sign-in renewal prerequisite
+
+Apply `npm run migrate:preview:oauth-refresh-renewal` to the PR's Preview branch and the
+shared Preview branch. Repeat on each to check that the constraint stays in place. From
+the reviewed head, set `PRODUCTION_SNAPSHOT_NAME=pre-oauth-refresh-renewal-20261118`
+for the guarded runner and apply `npm run migrate:production:oauth-refresh-renewal`.
+Record the result below for each target before merging. The expected row has
+`convalidated = true` and `CHECK ((expires_at > created_at))`.
+
+```sql
+SELECT conname, convalidated, pg_get_constraintdef(oid)
+FROM pg_constraint
+WHERE conrelid = 'public.oauth_token_families'::regclass
+  AND conname = 'oauth_token_families_expiry_after_creation';
+```
+
+Decision 201 removes the upper bound on the family's end. The migration waits up to one
+second for its table lock. Its two-second statement limit includes both that wait and
+the single check validation scan. A timeout rolls back the whole change. Existing rows
+keep their original dates, and the old application can continue issuing and rotating tokens.
+
 ### When a migration times out
 
 Normal migrations run inside one transaction that the runner starts with

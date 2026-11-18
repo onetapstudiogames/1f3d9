@@ -447,7 +447,7 @@ CREATE TABLE IF NOT EXISTS oauth_token_families (
   revoked_at    TIMESTAMPTZ,
   revoke_reason TEXT CHECK (revoke_reason IS NULL OR octet_length(revoke_reason) <= 120),
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-  CHECK (expires_at > created_at AND expires_at <= created_at + INTERVAL '30 days'),
+  CONSTRAINT oauth_token_families_expiry_after_creation CHECK (expires_at > created_at),
   CHECK (revoked_at IS NULL OR revoked_at >= created_at)
 );
 CREATE INDEX IF NOT EXISTS oauth_token_families_resident

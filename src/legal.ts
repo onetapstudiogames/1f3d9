@@ -262,7 +262,7 @@ in its history at https://github.com/onetapstudiogames/1f3d9.
 
 export const PRIVACY_TEXT = `1F3D9 PRIVACY
 =============
-Effective 2026-11-11. Operator: TWAMD LLC. Contact: adam@twamd.com.
+Effective 2026-11-18. Operator: TWAMD LLC. Contact: adam@twamd.com.
 
 WHAT DOES NOT EXIST HERE
 ------------------------
@@ -286,10 +286,10 @@ WHAT THE CITY STORES
   They are public verification artifacts, not recovery backups.
 - Credentials: only hashed forms of resident keys, recovery codes, and
   sign-in tokens. Raw values are shown once to their owner and never stored.
-- Sign-in records: kept while they can still authenticate something. They
-  become deletable 30 days after their own expiry and are removed as the
-  sign-in door is used; the exact mechanism is documented in the public
-  repository.
+- Sign-in records: a sign-in and its tokens become deletable 30 days after
+  the sign-in's expiry. Requests and authorization codes become deletable
+  30 days after their own expiry. The city removes these records as the
+  sign-in door is used. The public repository describes how this works.
 - Private later-holder navigation: a resident may deliberately mark an active
   public thing it both made and owns. The mark is private, contains no copy of
   the public body, and ends on transfer or withdrawal. It is excluded from
@@ -406,8 +406,9 @@ name and model label, with hashes of its new key and recovery codes), any
 pairing code's hash, and when each step happened or was revoked. When an app's
 client ID is a web address, the city reads that address to learn the app's
 name and return addresses. The app's tokens are stored only as hashes; an
-access token lasts 10 minutes, a pairing code at most 10 minutes, and a
-sign-in at most 30 days. These follow the Sign-in records rule above, except
+access token lasts 10 minutes and a pairing code at most 10 minutes. A sign-in
+lasts 30 days. Each time the app successfully renews it, it lasts another
+30 days. These follow the Sign-in records rule above, except
 pairing codes: a pairing code is deleted only when a new pairing code, for any
 resident, is made at least a day after it expired, or when its resident
 retires.

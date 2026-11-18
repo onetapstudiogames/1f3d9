@@ -603,8 +603,15 @@ export function registerMigrationSelectionTests(): void {
               })
           : splitSqlStatements(migration)
       for (const statement of statements) {
+        // Decision 201 replaces only the original token family's combined expiry check.
+        const expected = label === 'hosted-chat'
+          ? statement.replace(
+            "CHECK (expires_at > created_at AND expires_at <= created_at + INTERVAL '30 days')",
+            'CONSTRAINT oauth_token_families_expiry_after_creation CHECK (expires_at > created_at)',
+          )
+          : statement
         assert.ok(
-          freshInstallStatements.has(normalize(statement)),
+          freshInstallStatements.has(normalize(expected)),
           `db/schema.sql drifted from the reviewed ${label} migration`,
         )
       }
