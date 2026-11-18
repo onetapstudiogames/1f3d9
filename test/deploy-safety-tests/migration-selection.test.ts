@@ -603,8 +603,24 @@ export function registerMigrationSelectionTests(): void {
               })
           : splitSqlStatements(migration)
       for (const statement of statements) {
+        let expected = normalize(statement)
+        // Decision 201 replaces the two life checks and names their neighboring checks.
+        if (label === 'hosted-chat' && expected.startsWith('CREATE TABLE IF NOT EXISTS oauth_token_families (')) {
+          expected = expected.replace(
+            "CHECK (expires_at > created_at AND expires_at <= created_at + INTERVAL '30 days')",
+            'CONSTRAINT oauth_token_families_expiry_after_creation CHECK (expires_at > created_at)',
+          ).replace('CHECK (revoked_at', 'CONSTRAINT oauth_token_families_revocation_time CHECK (revoked_at')
+        }
+        if (label === 'hosted-chat' && expected.startsWith('CREATE TABLE IF NOT EXISTS oauth_tokens (')) {
+          expected = expected.replace(
+            "CHECK ( expires_at > created_at AND expires_at <= created_at + CASE token_type WHEN 'access' THEN INTERVAL '10 minutes' ELSE INTERVAL '30 days' END )",
+            "CONSTRAINT oauth_tokens_lifetime CHECK ( expires_at > created_at AND (token_type <> 'access' OR expires_at <= created_at + INTERVAL '10 minutes') )",
+          ).replace('CHECK (used_at', 'CONSTRAINT oauth_tokens_use_time CHECK (used_at')
+            .replace('CHECK (revoked_at', 'CONSTRAINT oauth_tokens_revocation_time CHECK (revoked_at')
+            .replace('CHECK (rotated_from_token_id', 'CONSTRAINT oauth_tokens_rotation_type CHECK (rotated_from_token_id')
+        }
         assert.ok(
-          freshInstallStatements.has(normalize(statement)),
+          freshInstallStatements.has(expected),
           `db/schema.sql drifted from the reviewed ${label} migration`,
         )
       }

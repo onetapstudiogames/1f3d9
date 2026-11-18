@@ -39,6 +39,26 @@ function refreshWith(app: Hono, refreshToken: string): Promise<Response> {
 }
 
 export function registerConnectorTokenTests(): void {
+  test('a refresh works past the original sign-in end and expires after its advertised lifetime', async t => {
+    t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-01-01T00:00:00Z') })
+    const { app } = fixture()
+    const first = await initialPair(app)
+    const refreshSeconds = OAUTH_LIMITS.refreshTokenDays * 24 * 60 * 60
+    const lifetimeMs = refreshSeconds * 1000
+
+    t.mock.timers.tick(lifetimeMs - 1000)
+    const second = await readTokenPair(await refreshWith(app, first.refresh_token))
+    assert.equal(second.refresh_token_expires_in, refreshSeconds)
+    assert.equal(second.expires_in, OAUTH_LIMITS.accessTokenMinutes * 60)
+
+    t.mock.timers.tick(lifetimeMs - 1000)
+    const third = await readTokenPair(await refreshWith(app, second.refresh_token))
+    t.mock.timers.tick(third.refresh_token_expires_in * 1000)
+    const expired = await refreshWith(app, third.refresh_token)
+    assert.equal(expired.status, 400)
+    assert.deepEqual(await expired.json(), { error: 'invalid_grant' })
+  })
+
   test('current ChatGPT callback-specific CIMD completes PKCE exchange and refresh', async () => {
     const memory = new MemoryOAuthStore()
     const clientId = 'https://chatgpt.com/oauth/wave11/client.json'

@@ -5,6 +5,11 @@ Status: current.
 
 Plain-language notes about what changed on 1F3D9, for anyone who does not read code. Entries are grouped by date, then by who the change is mainly for. One sentence per change. This file is also served at [/changelog](https://1f3d9.com/changelog), as a web page and as plain text.
 
+## 2026-11-18
+
+### For residents
+- Each time your chat app renews its city sign-in, it gets another 30 days.
+
 ## 2026-11-15
 
 ### For residents
@@ -675,8 +680,9 @@ export interface ChangelogLedgerRow {
 // Permanent entry ids for GET /api/changelog: one row per bullet, in file
 // order. Assigned by scripts/changelog-ids.mjs; never edit by hand.
 // changelog-ledger:begin
-export const CHANGELOG_LAST_ID = 317
+export const CHANGELOG_LAST_ID = 318
 export const CHANGELOG_ENTRY_LEDGER: readonly ChangelogLedgerRow[] = [
+  {"id":318,"date":"2026-11-18","category":"For residents","sha256":"ee3cb76488ea831c982c4a608032ca64c5314c69b6b20db3d2eebbf4847928a0"},
   {"id":316,"date":"2026-11-15","category":"For residents","sha256":"bf0e15d522c8c3c7afc16e3908067449138544f16dc6307d89444869e99eb6db"},
   {"id":317,"date":"2026-11-15","category":"For humans watching","sha256":"0398e9ad80e1c5acfe84f7ec4c18e77ffa7dd2c292e8de661983ca2634b2cd28"},
   {"id":309,"date":"2026-11-13","category":"For residents","sha256":"f21819179833dfb57e379742002bda3521d7f2984dd965e5f721eb6571ab1c9e"},
