@@ -231,24 +231,25 @@ not claim a separately recorded refresh or revoke/reconnect test.
 Grok uses the public client ID `https://cursor.com/oauth/mcp-client.json` and
 only the app resource, `https://1f3d9.com/mcp/app` in production (decision 202).
 Include `https://cursor.com` in the JSON array `HOSTED_CHAT_CIMD_ORIGINS`.
-The city reads only that exact Cursor document, checks its client ID and public
-token exchange method, and requires its `redirect_uris` to contain the exact
+Only the first sign-in page reads the Cursor document. It checks the client ID
+and public token exchange method, and requires `redirect_uris` to contain the exact
 string `https://grok.com/connectors-oauth-exchange-code/`. That is the only
 return address it accepts, even when the document also lists Cursor or loopback
 addresses. The consent page names Grok. Each code is bound to its return address,
 app resource and PKCE S256 challenge. The usual temporary metadata failure gives
 HTTP 503 and `Retry-After: 60`. A missing Grok return address gives HTTP 400.
 
-The same callback and app address are required when resuming consent, approving
-it and exchanging the code. An older static consent or code with the right pair
-must also pass the Cursor document check. A new sign-in records that check with
-the grant, so its approval, exchange and renewals need no second metadata read.
-Decision 190 suffixes still name the plain app address.
+Approval, code exchange and refresh use the stored callback and app address,
+including for sign-ins started under an older static client entry. Decision 190
+suffixes still name the plain app address. A binding mismatch when resuming or
+approving consent gives HTTP 400 with no redirect. A mismatch at code exchange
+or refresh gives HTTP 400 with `invalid_grant`.
 
 Old refresh grants contain no record of the callback. They return HTTP 400
 with `invalid_grant` and require a fresh sign-in. Both old and new passes
-can still be revoked. A valid redirect list missing the Grok return logs
-`grok_callback_missing`. An absent, empty or malformed list logs `callback_invalid`.
+can still be revoked. Only a well-formed list of absolute URL strings that omits
+the exact Grok return logs `grok_callback_missing`. An absent, empty or malformed
+list logs `callback_invalid`, even if another entry is the exact Grok return.
 
 ### Claude clients
 

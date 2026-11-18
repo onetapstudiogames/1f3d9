@@ -105,26 +105,38 @@ test('reopening the same canceled static Grok consent keeps its terminal result'
   assert.equal(JSON.parse(memory.safeState()).requests.length, 1)
 })
 
-for (const [status, fetcher] of [
-  [400, async () => Response.json({ client_id: CLIENT, client_name: 'Cursor', redirect_uris: [CURSOR], token_endpoint_auth_method: 'none' })],
-  [503, async () => new Response(null, { status: 502 })],
+for (const [name, fetcher] of [
+  ['the Grok return disappears', async () => Response.json({ client_id: CLIENT, client_name: 'Cursor', redirect_uris: [CURSOR], token_endpoint_auth_method: 'none' })],
+  ['Cursor goes offline', async () => new Response(null, { status: 502 })],
 ] as const) {
-  test('an old static approval and code with the right pair still need verified metadata: ' + status, async () => {
+  test('an old static approval and code keep the stored Grok binding if ' + name, async () => {
     const { app, session } = await pending(GROK, APP, fetcher)
     const approval = await browserPost(app, session, { action: 'link', csrf: session.csrf, resident_key: EXISTING_KEY })
-    assert.equal(approval.status, status)
-    assert.equal(approval.headers.get('location'), null)
-    assert.equal(approval.headers.get('retry-after'), status === 503 ? '60' : null)
-    assert.equal(approval.headers.get('set-cookie')?.includes('Max-Age=0') ?? false, status === 400)
+    assert.equal(approval.status, 303)
+    const callback = new URL(approval.headers.get('location')!)
+    assert.equal(callback.origin + callback.pathname, GROK)
 
     const saved = await storedCode(GROK, APP, fetcher)
     const exchange = await exchangeCode(saved.app, saved.code, { client_id: CLIENT, redirect_uri: GROK, resource: APP })
-    assert.equal(exchange.status, status)
-    assert.deepEqual(await exchange.json(), { error: status === 503 ? 'temporarily_unavailable' : 'invalid_grant' })
-    assert.equal(exchange.headers.get('retry-after'), status === 503 ? '60' : null)
-    assert.equal(JSON.parse(saved.memory.safeState()).families.length, 0)
+    const pair = await readTokenPair(exchange)
+    assert.ok(await residentByOAuthAccessToken(pair.access_token, config, saved.memory.api, 'app'))
   })
 }
+
+test('Grok approval, code exchange and refresh use the stored binding with zero document reads', async t => {
+  const fetcher = t.mock.fn(listed)
+  const { app, session } = await pending(GROK, APP, fetcher)
+  const approval = await browserPost(app, session, { action: 'link', csrf: session.csrf, resident_key: EXISTING_KEY })
+  assert.equal(approval.status, 303)
+  const code = new URL(approval.headers.get('location')!).searchParams.get('code')!
+  const afterApproval = fetcher.mock.callCount()
+
+  const pair = await readTokenPair(await exchangeCode(app, code, { client_id: CLIENT, redirect_uri: GROK, resource: APP + '?2' }))
+  const afterExchange = fetcher.mock.callCount()
+  await readTokenPair(await refresh(app, pair.refresh_token, APP + '?3'))
+  assert.deepEqual({ afterApproval, afterExchange, afterRefresh: fetcher.mock.callCount() },
+    { afterApproval: 0, afterExchange: 0, afterRefresh: 0 })
+})
 
 for (const resource of [APP, RESOURCE]) {
   test('a legacy refresh grant with no callback record cannot renew at ' + resource, async () => {

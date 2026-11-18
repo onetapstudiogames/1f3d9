@@ -17,7 +17,7 @@ const CURSOR_CIMD_ORIGIN = 'https://cursor.com'
 export const GROK_CLIENT_ID = `${CURSOR_CIMD_ORIGIN}/oauth/mcp-client.json`
 export const GROK_CALLBACK = 'https://grok.com/connectors-oauth-exchange-code/'
 // A newline cannot occur in a public client ID. This private key records that
-// the pinned metadata and callback were checked before saving the grant.
+// the grant is bound to the exact Grok callback.
 const CHECKED_GROK_CLIENT = `${GROK_CLIENT_ID}\n${GROK_CALLBACK}`
 const CLAUDE_CODE_CLIENT_ID = 'https://claude.ai/oauth/claude-code-client-metadata'
 const CLAUDE_CODE_CALLBACKS = ['http://localhost/callback', 'http://127.0.0.1/callback']
@@ -472,6 +472,10 @@ export async function resolveOAuthClient(
   let callbacks: string[]
   try {
     callbacks = stringArray(decoded.redirect_uris, 'redirect_uris')
+    if (clientId === GROK_CLIENT_ID) {
+      // Check every absolute URL, keeping the original strings for the exact callback match.
+      for (const callback of callbacks) new URL(text(callback, 'redirect URI', MAX_REDIRECT_URI))
+    }
   } catch {
     throw new OAuthClientRefusal('callback_invalid', answered)
   }
