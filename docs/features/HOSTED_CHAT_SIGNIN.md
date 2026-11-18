@@ -239,6 +239,17 @@ addresses. The consent page names Grok. Each code is bound to its return address
 app resource and PKCE S256 challenge. The usual temporary metadata failure gives
 HTTP 503 and `Retry-After: 60`. A missing Grok return address gives HTTP 400.
 
+The same callback and app address are required when resuming consent, approving
+it and exchanging the code. An older static consent or code with the right pair
+must also pass the Cursor document check. A new sign-in records that check with
+the grant, so its approval, exchange and renewals need no second metadata read.
+Decision 190 suffixes still name the plain app address.
+
+Old refresh grants contain no record of the callback. They return HTTP 400
+with `invalid_grant` and require a fresh sign-in. Both old and new passes
+can still be revoked. A valid redirect list missing the Grok return logs
+`grok_callback_missing`. An absent, empty or malformed list logs `callback_invalid`.
+
 ### Claude clients
 
 Claude Code's official metadata client ID is

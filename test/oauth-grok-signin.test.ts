@@ -42,7 +42,8 @@ function gateway(
 }
 
 test('Grok consent names Grok and returns a code for an app-door resident call', async t => {
-  const { app, memory, config } = gateway()
+  const fetcher = t.mock.fn(async () => Response.json(cursorDocument))
+  const { app, memory, config } = gateway(fetcher)
   app.post('/mcp/app', c => mcp(c, app, { door: 'app', forwardUnauthorizedStatus: true }))
   app.get('/api/me', async c => {
     const resident = await auth(c)
@@ -71,6 +72,7 @@ test('Grok consent names Grok and returns a code for an app-door resident call',
     assert.equal((await exchangeCode(app, code, { ...grokRequest, ...mismatch })).status, 400)
   }
   const pair = await readTokenPair(await exchangeCode(app, code, grokRequest))
+  assert.equal(fetcher.mock.callCount(), 1, 'the grant carries the metadata check through approval and exchange')
   assert.equal(await residentByOAuthAccessToken(pair.access_token, config, memory.api, 'connect'), null)
 
   const previousFlag = process.env.HOSTED_CHAT_SIGNIN_ENABLED
@@ -162,6 +164,16 @@ test('Grok metadata outages return the existing temporary refusal and identify t
   assert.equal(records[0]?.failed_check, 'metadata_unreachable')
   assert.partialDeepStrictEqual(records[0], { client_family: 'grok' })
   assert.equal(records[0]?.request_id, response.headers.get('x-request-id'))
+})
+
+test('absent, empty and malformed Grok redirect lists log callback_invalid', async () => {
+  for (const redirect_uris of [undefined, [], RETURN, [null], Array(21).fill(RETURN)]) {
+    const { app, records } = gateway(async () => Response.json({ ...cursorDocument, redirect_uris }))
+    const response = await app.request(authorizationUrl(grokRequest))
+    assert.equal(response.status, 400)
+    assert.equal(response.headers.get('x-1f3d9-reason'), 'client_not_approved')
+    assert.equal(records[0]?.failed_check, 'callback_invalid')
+  }
 })
 
 test('only the pinned raw client ID on an allowlisted Cursor origin can fetch a document', async () => {

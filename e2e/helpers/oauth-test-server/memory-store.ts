@@ -243,7 +243,7 @@ function makeMemoryStore(): OAuthStore {
       const familyId = nextFamilyId++
       tokenFamilies.set(familyId, {
         residentId: code.residentId,
-        clientId: code.clientId,
+        clientId: input.familyClientId ?? code.clientId,
         resource: code.resource,
         scope: code.scope,
         revoked: false,
@@ -284,7 +284,7 @@ function makeMemoryStore(): OAuthStore {
     revokeTokenFamilyByToken: async input => {
       const grant = accessGrants.get(input.tokenHash) ?? refreshGrants.get(input.tokenHash)
       const family = grant ? tokenFamilies.get(grant.familyId) : undefined
-      if (grant && family?.clientId === input.clientId) {
+      if (grant && family && (family.clientId === input.clientId || family.clientId === input.familyClientId)) {
         tokenFamilies.set(grant.familyId, { ...family, revoked: true })
       }
     },

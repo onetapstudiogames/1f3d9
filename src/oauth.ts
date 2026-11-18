@@ -25,6 +25,7 @@ import {
 } from './core.ts'
 import { publicText } from './input.ts'
 import {
+  GROK_CALLBACK,
   GROK_CLIENT_ID,
   OAUTH_ACCESS_TOKEN_PREFIX,
   OAUTH_AUTHORIZATION_CODE_PREFIX,
@@ -32,6 +33,7 @@ import {
   OAUTH_SCOPE,
   loopbackCallbackOrigin,
   OAuthClientRefusal,
+  allowsClientGrant,
   connectorResource,
   oauthEnabled,
   oauthResource,
@@ -39,8 +41,10 @@ import {
   oauthResources,
   parseCimdOrigins,
   parseOAuthClients,
+  publicOAuthClientId,
   publicOrigin,
   resolveOAuthClient,
+  storedOAuthClientId,
   tokenLooksSensitive,
   validateAuthorizationRequest,
   verifyPkceS256,
@@ -256,9 +260,8 @@ const CLIENT_CHECK_UNAVAILABLE = "The city could not check this chat app's sign-
 const CLIENT_CHECK_RETRY_SECONDS = 60
 
 /**
- * The one answer for a refused client on every sign-in page. A temporary check failure
- * is a 503 that says to try again; a real refusal stays 400 client_not_approved and
- * never invites a retry. The log names the failed check and nothing the caller chose.
+ * Metadata checks use the same status and retry interval at the browser and
+ * token endpoints. Only the browser renders the refusal as a sign-in page.
  */
 function clientRefusalResponse(
   c: Context,
@@ -271,15 +274,49 @@ function clientRefusalResponse(
   if (clientCheckIsTemporary(refusal.check)) {
     recordFailure(oauth, trace, stage, 'client_check_unavailable', 503, refusal.check, refusal.upstreamStatusClass)
     c.header('Retry-After', String(CLIENT_CHECK_RETRY_SECONDS))
+    if (stage === 'token_exchange') {
+      privateHeaders(c)
+      return c.json({ error: 'temporarily_unavailable' }, 503)
+    }
     return browserError(c, 503, 'client_check_unavailable', CLIENT_CHECK_UNAVAILABLE,
       '<p>Wait a minute, then return to the chat app and start sign-in again. If it stops here again, the request ID on this page lets the city find which check failed.</p>')
   }
   recordFailure(oauth, trace, stage, 'client_not_approved', 400, refusal.check, refusal.upstreamStatusClass)
+  if (stage === 'token_exchange') return tokenError(c, 'invalid_grant')
   return browserError(c, 400, 'client_not_approved', CLIENT_NOT_ACCEPTED, notAcceptedNextStepHtml)
 }
 
 function returnToChatApp(): string {
   return '<p>Return to the chat app and start sign-in again.</p>'
+}
+
+function invalidAuthorizationRequest(c: Context, oauth: OAuthRuntime, trace: OAuthRequestTrace, stage: OAuthFailureStage) {
+  recordFailure(oauth, trace, stage, 'invalid_request', 400)
+  return browserError(c, 400, 'invalid_request', 'The sign-in request was not valid.', returnToChatApp())
+}
+
+function checkStoredAuthorization(
+  c: Context, oauth: OAuthRuntime, trace: OAuthRequestTrace, stage: OAuthFailureStage, request: AuthorizationRequestRecord,
+): Response | null {
+  if (allowsClientGrant(request.client_id, request.redirect_uri, request.resource, oauth.environment)) return null
+  clearSessionCookie(c)
+  return invalidAuthorizationRequest(c, oauth, trace, stage)
+}
+
+// An older static registration could create this exact public ID without ever
+// reading the Cursor document. Only those records need a new metadata check.
+async function checkLegacyGrokMetadata(
+  c: Context, oauth: OAuthRuntime, trace: OAuthRequestTrace, stage: OAuthFailureStage, storedClientId: string,
+): Promise<Response | null> {
+  if (storedClientId !== GROK_CLIENT_ID) return null
+  try {
+    await resolveOAuthClient(GROK_CLIENT_ID, oauth.staticClients, oauth.cimdOrigins, oauth.fetcher)
+    return null
+  } catch (error) {
+    if (!(error instanceof OAuthClientRefusal)) throw error
+    if (stage !== 'token_exchange' && !clientCheckIsTemporary(error.check)) clearSessionCookie(c)
+    return clientRefusalResponse(c, oauth, trace, stage, error, returnToChatApp())
+  }
 }
 
 function returnToChatAppAfterHour(): string {
@@ -299,6 +336,8 @@ function terminalAuthorizationResponse(
   stage: OAuthFailureStage,
   progress: AuthorizationRequestProgress,
 ): Response {
+  const refused = checkStoredAuthorization(c, oauth, trace, stage, progress.request)
+  if (refused) return refused
   const detail: { reason: BrowserRefusalReason; message: string } = progress.status === 'confirmed'
     ? {
         reason: 'request_unavailable',
@@ -575,8 +614,9 @@ function isSameAuthorizationRequest(
   existing: AuthorizationRequestRecord,
   candidate: AuthorizationRequestInput,
 ): boolean {
-  return existing.client_id === candidate.clientId &&
-    existing.client_display_name === candidate.clientName &&
+  const clientId = publicOAuthClientId(existing.client_id)
+  return clientId === publicOAuthClientId(candidate.clientId) &&
+    (clientId === GROK_CLIENT_ID || existing.client_display_name === candidate.clientName) &&
     existing.redirect_uri === candidate.redirectUri &&
     existing.resource === candidate.resource &&
     existing.scope === candidate.scope &&
@@ -793,14 +833,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
     const requestUrl = new URL(c.req.url)
     const query = queryObject(requestUrl)
     if (!query) {
-      recordFailure(oauth, trace, 'authorization_request', 'invalid_request', 400)
-      return browserError(
-        c,
-        400,
-        'invalid_request',
-        'The sign-in request was not valid.',
-        returnToChatApp(),
-      )
+      return invalidAuthorizationRequest(c, oauth, trace, 'authorization_request')
     }
     trace = traceForClient(trace, query.client_id, oauth.staticClients)
     const clientId = typeof query.client_id === 'string' ? query.client_id : ''
@@ -825,22 +858,17 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
 
     let request
     try {
-      const resources = clientId === GROK_CLIENT_ID ? oauthResourceFor('app', oauth.environment) : oauth.resources
-      request = validateAuthorizationRequest(query, [client], resources)
+      request = validateAuthorizationRequest(query, [client], oauth.resources)
     } catch {
-      recordFailure(oauth, trace, 'authorization_request', 'invalid_request', 400)
-      return browserError(
-        c,
-        400,
-        'invalid_request',
-        'The sign-in request was not valid.',
-        returnToChatApp(),
-      )
+      return invalidAuthorizationRequest(c, oauth, trace, 'authorization_request')
+    }
+    if (!allowsClientGrant(clientId, request.redirectUri, request.resource, oauth.environment)) {
+      return invalidAuthorizationRequest(c, oauth, trace, 'authorization_request')
     }
     const authorizationInput = (sessionCookie: BrowserSessionCookie): AuthorizationRequestInput => ({
       sessionHash: sha256(sessionCookie.session),
       csrfHash: sha256(sessionCookie.csrf),
-      clientId: request.clientId,
+      clientId: storedOAuthClientId(request.clientId),
       clientName: request.clientName,
       redirectUri: request.redirectUri,
       resource: request.resource,
@@ -856,17 +884,23 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
       200,
       'Connect to 1F3D9',
       consentPage({
-        clientName: existing?.client_display_name ?? request.clientName,
+        clientName: existing?.client_id === GROK_CLIENT_ID ? 'Grok' : existing?.client_display_name ?? request.clientName,
         csrf: sessionCookie.csrf,
         resumed: existing !== undefined,
         pairingEnabled,
       }),
       registeredCallbackOrigin(existing?.redirect_uri ?? request.redirectUri),
     )
-    const renderActiveRequest = (
+    const renderActiveRequest = async (
       existing: ActiveAuthorizationRequest,
       sessionCookie: BrowserSessionCookie,
-    ): Response => {
+    ): Promise<Response> => {
+      const refused = checkStoredAuthorization(c, oauth, trace, 'authorization_request', existing)
+      if (refused) return refused
+      if (clientId !== GROK_CLIENT_ID) {
+        const unverified = await checkLegacyGrokMetadata(c, oauth, trace, 'authorization_request', existing.client_id)
+        if (unverified) return unverified
+      }
       if (existing.client_id.startsWith(GEMINI_CLIENT_PREFIX) && !resolveGeminiClient(existing.client_id, oauth.environment)) {
         return clientRefusalResponse(c, oauth, trace, 'client_metadata',
           new OAuthClientRefusal('gemini_client_unrecognized'), returnToChatApp())
@@ -895,7 +929,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
       if (!progress || !isSameAuthorizationRequest(progress.request, authorizationInput(sessionCookie))) {
         return null
       }
-      trace = traceForClient(trace, progress.request.client_id, oauth.staticClients)
+      trace = traceForClient(trace, publicOAuthClientId(progress.request.client_id), oauth.staticClients)
       return terminalAuthorizationResponse(c, oauth, trace, 'authorization_request', progress)
     }
 
@@ -905,8 +939,8 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
         const input = authorizationInput(cookieState.cookie)
         const existing = await oauth.store.getAuthorizationRequest(input.sessionHash)
         if (existing) {
-          trace = traceForClient(trace, existing.client_id, oauth.staticClients)
-          return renderActiveRequest(existing, cookieState.cookie)
+          trace = traceForClient(trace, publicOAuthClientId(existing.client_id), oauth.staticClients)
+          return await renderActiveRequest(existing, cookieState.cookie)
         } else {
           const response = await renderMatchingProgress(cookieState.cookie)
           if (response) return response
@@ -1056,11 +1090,11 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
           return clientRefusalResponse(c, oauth, trace, 'browser_approval',
             new OAuthClientRefusal('gemini_client_unrecognized'), returnToChatApp())
         }
-        trace = traceForClient(trace, progress.request.client_id, oauth.staticClients)
+        trace = traceForClient(trace, publicOAuthClientId(progress.request.client_id), oauth.staticClients)
         return terminalAuthorizationResponse(c, oauth, trace, 'browser_approval', progress)
       }
-      const request = await oauth.store.getAuthorizationRequest(sessionHash)
-      if (!request) {
+      const storedRequest = await oauth.store.getAuthorizationRequest(sessionHash)
+      if (!storedRequest) {
         const terminal = await renderCurrentTerminalProgress()
         if (terminal) return terminal
         return fail(
@@ -1070,7 +1104,12 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
           returnToChatApp(),
         )
       }
+      const request = { ...storedRequest, client_id: publicOAuthClientId(storedRequest.client_id) }
       trace = traceForClient(trace, request.client_id, oauth.staticClients)
+      const refused = checkStoredAuthorization(c, oauth, trace, 'browser_approval', request)
+      if (refused) return refused
+      const unverified = await checkLegacyGrokMetadata(c, oauth, trace, 'browser_approval', storedRequest.client_id)
+      if (unverified) return unverified
       if (request.client_id.startsWith(GEMINI_CLIENT_PREFIX) && !resolveGeminiClient(request.client_id, oauth.environment)) {
         return clientRefusalResponse(c, oauth, trace, 'browser_approval',
           new OAuthClientRefusal('gemini_client_unrecognized'), returnToChatApp())
@@ -1397,7 +1436,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
       if (pending.status === 'request_unavailable') {
         const resumed = await oauth.store.getAuthorizationRequest(sessionHash)
         if (resumed && isStagedAuthorizationRequest(resumed)) {
-          trace = traceForClient(trace, resumed.client_id, oauth.staticClients)
+          trace = traceForClient(trace, publicOAuthClientId(resumed.client_id), oauth.staticClients)
           return stagedAuthorizationResponse(c, resumed, csrf)
         }
         const terminal = await renderCurrentTerminalProgress()
@@ -1498,18 +1537,22 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
         const code = await oauth.store.getAuthorizationCode(codeHash)
         if (
           !code ||
-          code.clientId !== clientId ||
+          publicOAuthClientId(code.clientId) !== clientId ||
           code.redirectUri !== redirectUri ||
           code.resource !== resource ||
           code.scope !== OAUTH_SCOPE ||
+          !allowsClientGrant(clientId, redirectUri, resource, oauth.environment) ||
           !verifyPkceS256(verifier, code.codeChallenge)
         ) return fail('invalid_grant')
+        const unverified = await checkLegacyGrokMetadata(c, oauth, trace, stage, code.clientId)
+        if (unverified) return unverified
 
         const accessToken = opaque(OAUTH_ACCESS_TOKEN_PREFIX)
         const refreshToken = opaque(OAUTH_REFRESH_TOKEN_PREFIX)
         const exchanged = await oauth.store.exchangeAuthorizationCode({
           codeHash,
-          clientId,
+          clientId: code.clientId,
+          familyClientId: storedOAuthClientId(clientId),
           redirectUri,
           resource,
           accessTokenHash: sha256(accessToken),
@@ -1522,7 +1565,9 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
       if (grantType === 'refresh_token') {
         const presented = one(values, 'refresh_token', 100)
         const junkBucket = `junk-ip:${clientAddress(c, oauth.environment)}`
-        if (!presented?.startsWith(OAUTH_REFRESH_TOKEN_PREFIX)) {
+        // Refresh names no redirect. The family lookup below proves the Grok callback.
+        if (!presented?.startsWith(OAUTH_REFRESH_TOKEN_PREFIX) ||
+          !allowsClientGrant(clientId, GROK_CALLBACK, resource, oauth.environment)) {
           const admission = await rateLimitAdmission(
             oauth.store,
             [junkBucket],
@@ -1533,9 +1578,10 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
           return fail('invalid_grant')
         }
         const presentedRefreshTokenHash = sha256(presented)
+        const familyClientId = storedOAuthClientId(clientId)
         const subject = await oauth.store.resolveRefreshRateLimitSubject({
           presentedRefreshTokenHash,
-          clientId,
+          clientId: familyClientId,
           resource,
         })
         if (subject.status === 'junk') {
@@ -1572,7 +1618,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
         const refreshToken = opaque(OAUTH_REFRESH_TOKEN_PREFIX)
         const rotated = await oauth.store.rotateRefreshToken({
           presentedRefreshTokenHash,
-          clientId,
+          clientId: familyClientId,
           resource,
           accessTokenHash: sha256(accessToken),
           newRefreshTokenHash: sha256(refreshToken),
@@ -1621,7 +1667,9 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
         ))) {
           recordFailure(oauth, trace, 'revocation', 'rate_limited', 200)
         } else {
-          await oauth.store.revokeTokenFamilyByToken({ tokenHash: sha256(token!), clientId })
+          await oauth.store.revokeTokenFamilyByToken({
+            tokenHash: sha256(token!), clientId, familyClientId: storedOAuthClientId(clientId),
+          })
         }
       }
     } catch {

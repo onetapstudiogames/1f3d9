@@ -15,7 +15,10 @@ const MAX_REDIRECT_URI = 4_096
 const CHATGPT_CIMD_ORIGIN = 'https://chatgpt.com'
 const CURSOR_CIMD_ORIGIN = 'https://cursor.com'
 export const GROK_CLIENT_ID = `${CURSOR_CIMD_ORIGIN}/oauth/mcp-client.json`
-const GROK_CALLBACK = 'https://grok.com/connectors-oauth-exchange-code/'
+export const GROK_CALLBACK = 'https://grok.com/connectors-oauth-exchange-code/'
+// A newline cannot occur in a public client ID. This private key records that
+// the pinned metadata and callback were checked before saving the grant.
+const CHECKED_GROK_CLIENT = `${GROK_CLIENT_ID}\n${GROK_CALLBACK}`
 const CLAUDE_CODE_CLIENT_ID = 'https://claude.ai/oauth/claude-code-client-metadata'
 const CLAUDE_CODE_CALLBACKS = ['http://localhost/callback', 'http://127.0.0.1/callback']
 const LOOPBACK_CALLBACK_PATH = '/callback'
@@ -285,6 +288,22 @@ export function oauthResourceFor(
 
 export function oauthResources(environment: OAuthEnvironment = process.env): readonly string[] {
   return Object.freeze([oauthResourceFor('connect', environment), oauthResourceFor('app', environment)])
+}
+
+/** Apply decision 202 to a grant after decision 190 has resolved its resource. */
+export function allowsClientGrant(
+  clientId: string, redirectUri: string, resource: string, environment: OAuthEnvironment,
+): boolean {
+  return publicOAuthClientId(clientId) !== GROK_CLIENT_ID ||
+    (redirectUri === GROK_CALLBACK && resource === oauthResourceFor('app', environment))
+}
+
+export function storedOAuthClientId(clientId: string): string {
+  return clientId === GROK_CLIENT_ID ? CHECKED_GROK_CLIENT : clientId
+}
+
+export function publicOAuthClientId(storedId: string): string {
+  return storedId === CHECKED_GROK_CLIENT ? GROK_CLIENT_ID : storedId
 }
 
 /** Decision 190: the query a chat app may add after a connector address, as in `/mcp/connect?2`. */
