@@ -280,4 +280,82 @@ export async function registerRegistrationConfirmationTests(
     }
   })
 
+  await t.test('a finished request reports its one code only to its own browser binding', async () => {
+    await resetDatabase()
+    const request = authorizationRequestInput('final-tap-lookup')
+    const pending = stagedRegistration('final-tap-lookup', 'final-tap-lookup')
+    const codeHash = sha256('final-tap-lookup:authorization-code')
+    await store.createAuthorizationRequest(request)
+    assert.equal((await store.stageNewResidentRegistration(pending)).status, 'staged')
+    const binding = { sessionHash: request.sessionHash, csrfHash: request.csrfHash }
+    const before = await store.getAuthorizationRequestProgress(binding)
+    assert.ok(before)
+    assert.equal(await store.getAuthorizationCodeForRequest(before.request.id), null)
+
+    assert.equal((await store.confirmNewResidentAndIssueAuthorizationCode({
+      ...binding, residentSecretHash: pending.residentSecretHash, authorizationCodeHash: codeHash,
+    })).status, 'approved')
+    const progress = await store.getAuthorizationRequestProgress(binding)
+    assert.equal(progress?.status, 'confirmed')
+    assert.equal(await store.getAuthorizationRequestProgress({ ...binding, csrfHash: sha256('another csrf') }), null)
+    assert.equal(await store.getAuthorizationRequestProgress({ ...binding, sessionHash: sha256('another session') }), null)
+    assert.deepEqual(await store.getAuthorizationCodeForRequest(progress!.request.id), {
+      codeHash, used: false, expired: false,
+    })
+
+    assert.equal(await store.exchangeAuthorizationCode({
+      codeHash,
+      clientId: request.clientId,
+      redirectUri: request.redirectUri,
+      resource: request.resource,
+      accessTokenHash: sha256('final-tap-lookup:access'),
+      refreshTokenHash: sha256('final-tap-lookup:refresh'),
+    }), true)
+    assert.deepEqual(await store.getAuthorizationCodeForRequest(progress!.request.id), {
+      codeHash, used: true, expired: false,
+    })
+    await database!.query(
+      `UPDATE oauth_authorization_codes SET used_at = NULL, expires_at = created_at + interval '1 microsecond' WHERE code_hash = $1`,
+      [codeHash],
+    )
+    assert.deepEqual(await store.getAuthorizationCodeForRequest(progress!.request.id), {
+      codeHash, used: false, expired: true,
+    })
+  })
+
+  await t.test('two overlapping final taps for one request create one resident and one code', async () => {
+    await resetDatabase()
+    const request = authorizationRequestInput('final-tap-overlap')
+    const pending = stagedRegistration('final-tap-overlap', 'final-tap-overlap')
+    const codeHash = sha256('final-tap-overlap:authorization-code')
+    await store.createAuthorizationRequest(request)
+    assert.equal((await store.stageNewResidentRegistration(pending)).status, 'staged')
+    const tap = () => store.confirmNewResidentAndIssueAuthorizationCode({
+      sessionHash: request.sessionHash,
+      csrfHash: request.csrfHash,
+      residentSecretHash: pending.residentSecretHash,
+      authorizationCodeHash: codeHash,
+    })
+    const results = await Promise.all([tap(), tap()])
+    assert.deepEqual(results.map(result => result.status).sort(), ['approved', 'request_unavailable'])
+    const state = await database!.query(
+      `SELECT
+           (SELECT count(*) FROM residents WHERE handle = 'final-tap-overlap') AS residents,
+           (SELECT count(*) FROM resident_presence presence
+             JOIN residents resident ON resident.id = presence.resident_id
+             WHERE resident.handle = 'final-tap-overlap') AS presences,
+           (SELECT count(*) FROM resident_recovery_codes code
+             JOIN residents resident ON resident.id = code.resident_id
+             WHERE resident.handle = 'final-tap-overlap') AS recovery_codes,
+           (SELECT count(*) FROM oauth_authorization_codes) AS authorization_codes`,
+    )
+    assert.deepEqual(state.rows, [{ residents: '1', presences: '1', recovery_codes: '8', authorization_codes: '1' }])
+    const progress = await store.getAuthorizationRequestProgress({
+      sessionHash: request.sessionHash, csrfHash: request.csrfHash,
+    })
+    assert.equal(progress?.status, 'confirmed')
+    assert.deepEqual(await store.getAuthorizationCodeForRequest(progress!.request.id), {
+      codeHash, used: false, expired: false,
+    })
+  })
 }

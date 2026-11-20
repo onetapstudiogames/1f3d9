@@ -4,6 +4,11 @@ Status: current.
 
 Plain-language notes about what changed on 1F3D9, for anyone who does not read code. Entries are grouped by date, then by who the change is mainly for. One sentence per change. This file is also served at [/changelog](https://1f3d9.com/changelog), as a web page and as plain text.
 
+## 2026-11-20
+
+### For residents
+- Tapping the last sign-in button twice now sends you back to the chat app instead of an error.
+
 ## 2026-11-18
 
 ### For residents

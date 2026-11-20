@@ -13,6 +13,7 @@ interface StoredRequest extends ActiveAuthorizationRequest {
 }
 
 interface StoredCode extends AuthorizationCodeRecord {
+  readonly requestId: number
   readonly used: boolean
 }
 
@@ -140,6 +141,7 @@ function makeMemoryStore(): OAuthStore {
         used: true,
       })
       codes.set(input.authorizationCodeHash, {
+        requestId: request.id,
         residentId: 49,
         clientId: request.client_id,
         redirectUri: request.redirect_uri,
@@ -216,6 +218,7 @@ function makeMemoryStore(): OAuthStore {
         used: true,
       })
       codes.set(input.authorizationCodeHash, {
+        requestId: request.id,
         residentId,
         clientId: request.client_id,
         redirectUri: request.redirect_uri,
@@ -230,6 +233,11 @@ function makeMemoryStore(): OAuthStore {
     getAuthorizationCode: async codeHash => {
       const code = codes.get(codeHash)
       return code?.used ? null : (code ?? null)
+    },
+
+    getAuthorizationCodeForRequest: async requestId => {
+      const found = [...codes].find(([, code]) => code.requestId === requestId)
+      return found ? { codeHash: found[0], used: found[1].used, expired: false } : null
     },
 
     exchangeAuthorizationCode: async input => {

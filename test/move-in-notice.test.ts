@@ -104,7 +104,8 @@ test('the page script shows the expiry in the reader\'s own clock time', () => {
     querySelectorAll: (selector: string) => (selector === '[data-local-time]' ? [time] : []),
     querySelector: () => null,
     getElementById: () => null,
+    addEventListener() {},
   }
-  new Function('document', 'history', BROWSER_IDENTITY_SCRIPT)(document, { state: null, replaceState() {} })
+  new Function('document', 'history', 'window', BROWSER_IDENTITY_SCRIPT)(document, { state: null, replaceState() {} }, { addEventListener() {} })
   assert.equal(time.textContent, new Date(datetime).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }))
 })

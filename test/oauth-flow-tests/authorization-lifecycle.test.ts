@@ -64,15 +64,13 @@ export function registerAuthorizationLifecycleTests(): void {
         return { status: 'request_unavailable' as const }
       }
 
+      // The lost race was this browser's own first press, so the code it issued goes back to the chat app.
       const response = await browserPost(app, session, {
         action: 'confirm', csrf: session.csrf, resident_key: key,
       })
-      assert.equal(response.status, 403)
-      assert.equal(response.headers.get('x-1f3d9-reason'), 'request_unavailable')
-      const body = await response.text()
-      assert.match(body, /confirm-race-resident[^.]*already lives/iu)
-      assert.match(body, /choose “I already live here,”[^.]*saved key/iu)
-      assert.doesNotMatch(body, new RegExp(key, 'u'))
+      const code = authorizationCode(response)
+      assert.doesNotMatch(await response.text(), new RegExp(key, 'u'))
+      assert.equal((await exchangeCode(app, code)).status, 200)
     }
   })
 
@@ -102,24 +100,9 @@ export function registerAuthorizationLifecycleTests(): void {
       }))
     }
 
-    {
-      const { app } = fixture()
-      const session = await begin(app)
-      const approved = await browserPost(app, session, {
-        action: 'link', csrf: session.csrf, resident_key: EXISTING_KEY,
-      })
-      authorizationCode(approved)
-      stopped.push(await browserPost(app, session, {
-        action: 'link', csrf: session.csrf, resident_key: EXISTING_KEY,
-      }))
-    }
-
-    for (const [index, response] of stopped.entries()) {
+    for (const response of stopped) {
       assert.equal(response.status, 403)
-      assert.equal(
-        response.headers.get('x-1f3d9-reason'),
-        index < 2 ? 'request_expired' : 'request_unavailable',
-      )
+      assert.equal(response.headers.get('x-1f3d9-reason'), 'request_expired')
       const body = await response.text()
       assert.match(body, /return to the chat app and start sign-in again/iu)
       assert.doesNotMatch(body, /name="resident_key"/u)

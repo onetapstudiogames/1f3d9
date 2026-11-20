@@ -72,6 +72,25 @@ export const BROWSER_IDENTITY_SCRIPT = String.raw`(() => {
     if (confirm.disabled) { event.preventDefault(); return; }
     confirm.form.elements.resident_key.value = document.querySelector('[data-file-content="key"] code').textContent;
   });
+  // A posted form is sent once: its buttons turn off on the first press. This listens on the
+  // document so a page script that sends the form itself has already prevented the default.
+  const submitButtons = form => Array.from(form.querySelectorAll('button[type=submit], button:not([type])'));
+  document.addEventListener('submit', event => {
+    const form = event.target;
+    if (event.defaultPrevented || !(form instanceof HTMLFormElement) || form.method !== 'post') return;
+    if (form.dataset.sent) { event.preventDefault(); return; }
+    form.dataset.sent = 'true';
+    submitButtons(form).forEach(button => { button.disabled = true; });
+  });
+  // A page shown again from history after a press that never reached the city can be pressed again.
+  window.addEventListener('pageshow', event => {
+    if (!event.persisted) return;
+    all('form[data-sent]').forEach(form => {
+      delete form.dataset.sent;
+      submitButtons(form).forEach(button => { button.disabled = false; });
+    });
+    enable();
+  });
   all('[data-file-kind]').forEach(picker => {
     let readVersion = 0;
     picker.addEventListener('change', async () => {

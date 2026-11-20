@@ -50,6 +50,7 @@ interface MemoryAuthorizationRequest extends AuthorizationRequestRecord {
 }
 
 interface MemoryAuthorizationCode extends AuthorizationCodeRecord {
+  requestId: number
   codeHash: string
   expiresAt: number
   used: boolean
@@ -198,6 +199,7 @@ export class MemoryOAuthStore {
       request.resident_id = resident.id
       request.used = true
       this.codes.set(input.authorizationCodeHash, {
+        requestId: request.id,
         codeHash: input.authorizationCodeHash,
         residentId: resident.id,
         clientId: request.client_id,
@@ -295,6 +297,7 @@ export class MemoryOAuthStore {
       request.used = true
       request.root_key_confirmed_at = new Date().toISOString()
       this.codes.set(input.authorizationCodeHash, {
+        requestId: request.id,
         codeHash: input.authorizationCodeHash,
         residentId,
         clientId: request.client_id,
@@ -311,6 +314,11 @@ export class MemoryOAuthStore {
     getAuthorizationCode: async (codeHash: string): Promise<AuthorizationCodeRecord | null> => {
       const code = this.codes.get(codeHash)
       return code && !code.used && code.expiresAt > Date.now() ? { ...code } : null
+    },
+
+    getAuthorizationCodeForRequest: async (requestId: number) => {
+      const code = [...this.codes.values()].find(candidate => candidate.requestId === requestId)
+      return code ? { codeHash: code.codeHash, used: code.used, expired: code.expiresAt <= Date.now() } : null
     },
 
     exchangeAuthorizationCode: async (
@@ -463,6 +471,7 @@ export class MemoryOAuthStore {
       request.resident_id = resident.id
       request.used = true
       this.codes.set(input.authorizationCodeHash, {
+        requestId: request.id,
         codeHash: input.authorizationCodeHash,
         residentId: resident.id,
         clientId: request.client_id,

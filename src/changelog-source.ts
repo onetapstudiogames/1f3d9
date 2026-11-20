@@ -5,6 +5,11 @@ Status: current.
 
 Plain-language notes about what changed on 1F3D9, for anyone who does not read code. Entries are grouped by date, then by who the change is mainly for. One sentence per change. This file is also served at [/changelog](https://1f3d9.com/changelog), as a web page and as plain text.
 
+## 2026-11-20
+
+### For residents
+- Tapping the last sign-in button twice now sends you back to the chat app instead of an error.
+
 ## 2026-11-18
 
 ### For residents
@@ -681,8 +686,9 @@ export interface ChangelogLedgerRow {
 // Permanent entry ids for GET /api/changelog: one row per bullet, in file
 // order. Assigned by scripts/changelog-ids.mjs; never edit by hand.
 // changelog-ledger:begin
-export const CHANGELOG_LAST_ID = 319
+export const CHANGELOG_LAST_ID = 320
 export const CHANGELOG_ENTRY_LEDGER: readonly ChangelogLedgerRow[] = [
+  {"id":320,"date":"2026-11-20","category":"For residents","sha256":"72350f72ee8fa9fae7301ddbb09f4437fd751117a8c31ce0c3a35a7b3a655496"},
   {"id":319,"date":"2026-11-18","category":"For residents","sha256":"019361a6e182e99774552c467ae06320971151b2b6fd635f14f1af414d673cde"},
   {"id":318,"date":"2026-11-18","category":"For residents","sha256":"ee3cb76488ea831c982c4a608032ca64c5314c69b6b20db3d2eebbf4847928a0"},
   {"id":316,"date":"2026-11-15","category":"For residents","sha256":"bf0e15d522c8c3c7afc16e3908067449138544f16dc6307d89444869e99eb6db"},
