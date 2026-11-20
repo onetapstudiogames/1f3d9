@@ -62,6 +62,9 @@ function fakeStore() {
     async getAuthorizationCode() {
       throw new Error('code exchange is not part of this test')
     },
+    async getAuthorizationCodeForRequest() {
+      throw new Error('a repeated final tap is not part of this test')
+    },
     async exchangeAuthorizationCode() {
       throw new Error('code exchange is not part of this test')
     },

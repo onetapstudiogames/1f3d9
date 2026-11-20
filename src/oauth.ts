@@ -11,6 +11,7 @@ import {
   type BrowserSessionCookie,
 } from './browser-session-cookie.ts'
 import { trustedBrowserForm } from './browser-form.ts'
+import { authorizationCodeFor } from './oauth-authorization-code.ts'
 import { markBrowserRefusal, type BrowserRefusalReason } from './browser-refusal.ts'
 import {
   HANDLE_RE,
@@ -337,6 +338,43 @@ function terminalAuthorizationResponse(
     detail.message,
     returnToChatApp(),
     registeredCallbackOrigin(progress.request.redirect_uri),
+  )
+}
+
+// The buttons that finish a sign-in. A repeat of one from the same browser, after the
+// first press already finished, gets the same answer instead of an error.
+const FINAL_ACTIONS: ReadonlySet<string> = new Set(['confirm', 'link', 'pair_confirm'])
+
+/**
+ * Answers a repeated final press for a request this browser already finished:
+ * the same unused code goes back to the chat app, or, once the chat app used
+ * it, a short page says sign-in finished. Null keeps today's answer: no code,
+ * a code this browser's session did not produce, or a code that expired unused.
+ */
+async function finishedSignInReplay(
+  c: Context,
+  oauth: OAuthRuntime,
+  trace: OAuthRequestTrace,
+  request: AuthorizationRequestRecord,
+  session: string,
+): Promise<Response | null> {
+  const issued = await oauth.store.getAuthorizationCodeForRequest(request.id)
+  const code = authorizationCodeFor(session, request.id)
+  if (!issued || issued.codeHash !== sha256(code)) return null
+  if (!issued.used && issued.expired) return null
+  const refused = checkStoredAuthorization(c, oauth, trace, 'browser_approval', request)
+  if (refused) return refused
+  const redirect = { redirectUri: request.redirect_uri, state: request.state }
+  if (!issued.used) {
+    return successfulAuthorizationResponse(c, publicOAuthClientId(request.client_id), oauth.environment, redirect, code)
+  }
+  clearSessionCookie(c)
+  return html(
+    c,
+    200,
+    'Sign-in finished',
+    '<h1>Sign-in finished</h1><p>Go back to the chat app.</p>',
+    registeredCallbackOrigin(request.redirect_uri),
   )
 }
 
@@ -1062,7 +1100,10 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
             new OAuthClientRefusal('gemini_client_unrecognized'), returnToChatApp())
         }
         trace = traceForClient(trace, publicOAuthClientId(progress.request.client_id), oauth.staticClients)
-        return terminalAuthorizationResponse(c, oauth, trace, 'browser_approval', progress)
+        const replay = FINAL_ACTIONS.has(action ?? '')
+          ? await finishedSignInReplay(c, oauth, trace, progress.request, sessionCookie.session)
+          : null
+        return replay ?? terminalAuthorizationResponse(c, oauth, trace, 'browser_approval', progress)
       }
       const storedRequest = await oauth.store.getAuthorizationRequest(sessionHash)
       if (!storedRequest) {
@@ -1141,7 +1182,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
             callbackOrigin,
           )
         }
-        const authorizationCode = opaque(OAUTH_AUTHORIZATION_CODE_PREFIX)
+        const authorizationCode = authorizationCodeFor(sessionCookie.session, request.id)
         const redirect = await oauth.store.confirmNewResidentAndIssueAuthorizationCode({
           sessionHash,
           csrfHash,
@@ -1211,7 +1252,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
             callbackOrigin,
           )
         }
-        const authorizationCode = opaque(OAUTH_AUTHORIZATION_CODE_PREFIX)
+        const authorizationCode = authorizationCodeFor(sessionCookie.session, request.id)
         const redirect = await oauth.store.approveExistingResidentAndIssueAuthorizationCode({
           sessionHash,
           csrfHash,
@@ -1309,7 +1350,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
             callbackOrigin,
           )
         }
-        const authorizationCode = opaque(OAUTH_AUTHORIZATION_CODE_PREFIX)
+        const authorizationCode = authorizationCodeFor(sessionCookie.session, request.id)
         const redirect = await oauth.store.approveExistingResidentByPairingCodeAndIssueAuthorizationCode({
           sessionHash,
           csrfHash,

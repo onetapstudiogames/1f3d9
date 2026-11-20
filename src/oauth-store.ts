@@ -622,6 +622,24 @@ export async function getAuthorizationCode(codeHash: string): Promise<Authorizat
   } : null
 }
 
+export interface IssuedAuthorizationCode {
+  codeHash: string
+  used: boolean
+  expired: boolean
+}
+
+/** The one code a finished sign-in request issued, read only, so a repeated final tap can be answered. */
+export async function getAuthorizationCodeForRequest(requestId: number): Promise<IssuedAuthorizationCode | null> {
+  const rows = (await sql`
+    SELECT code_hash, used_at IS NOT NULL AS used, expires_at <= now() AS expired
+    FROM oauth_authorization_codes
+    WHERE request_id = ${requestId}
+    LIMIT 1
+  `) as { code_hash: string; used: boolean; expired: boolean }[]
+  const row = rows[0]
+  return row ? { codeHash: row.code_hash, used: row.used, expired: row.expired } : null
+}
+
 /**
  * Decision row 74: a signed-in coding client mints a ten-minute, single-use
  * pairing code bound to its own resident, at the secret hash that resident
@@ -1176,6 +1194,7 @@ export const postgresOAuthStore = {
   stageNewResidentRegistration,
   confirmNewResidentAndIssueAuthorizationCode,
   getAuthorizationCode,
+  getAuthorizationCodeForRequest,
   exchangeAuthorizationCode,
   resolveRefreshRateLimitSubject,
   rotateRefreshToken,

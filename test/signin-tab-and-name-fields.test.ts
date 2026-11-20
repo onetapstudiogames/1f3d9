@@ -62,12 +62,13 @@ function openPage(html: string, history: PageHistory | null) {
     querySelectorAll: (selector: string) => selector === '[data-identity-tab]' ? tabs : [],
     querySelector: () => null,
     getElementById: (id: string) => panes.get(id) ?? null,
+    addEventListener() {},
   }
   const pageHistory = history ?? {
     get state(): unknown { throw new Error('history blocked') },
     replaceState() { throw new Error('history blocked') },
   }
-  new Function('document', 'history', BROWSER_IDENTITY_SCRIPT)(document, pageHistory)
+  new Function('document', 'history', 'window', BROWSER_IDENTITY_SCRIPT)(document, pageHistory, { addEventListener() {} })
   const shown = () => {
     const selected = tabs.filter(tab => tab.getAttribute('aria-selected') === 'true').map(tab => tab.id)
     assert.equal(selected.length, 1)

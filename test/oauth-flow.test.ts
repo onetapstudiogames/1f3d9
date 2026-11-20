@@ -11,6 +11,7 @@ import { registerPairingTests } from './oauth-flow-tests/pairing.test.ts'
 import { registerClaudeCodeLoopbackTests } from './oauth-flow-tests/claude-code-loopback.test.ts'
 import { registerAppDoorResourceTests } from './oauth-flow-tests/app-door-resource.test.ts'
 import { registerSuffixedResourceTests } from './oauth-flow-tests/suffixed-resource.test.ts'
+import { registerFinalButtonRepeatTests } from './oauth-flow-tests/final-button-repeat.test.ts'
 
 // Nested registrars preserve the original OAuth flow test order.
 registerAuthorizationRequestTests()
@@ -26,3 +27,4 @@ registerPairingTests()
 registerClaudeCodeLoopbackTests()
 registerAppDoorResourceTests()
 registerSuffixedResourceTests()
+registerFinalButtonRepeatTests()

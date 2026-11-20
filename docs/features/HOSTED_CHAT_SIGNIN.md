@@ -93,8 +93,13 @@ Reloading with the same private cookie resumes a staged request without revealin
 credentials again.
 If both key and codes were saved, pick the saved key file or type the key; otherwise cancel the uncreated
 resident and begin fresh. Repeating a successful confirmation with the same key returns
-the same resident and repeats no side effect. If the final hosted response disappears,
-restart sign-in as the existing resident with the saved key; do not register again.
+the same resident and repeats no side effect. A repeated press of the last button
+("I saved both files, move in", "Connect my resident" or a pairing approval) from the same
+browser, for the same sign-in request, goes back to the chat app with the same unused code; once
+the chat app has used that code it shows "Sign-in finished" and asks the person to go back
+to the chat app. The page also turns that button off after the first press. If the final
+hosted response disappears in another way, such as a different browser or a code that expired
+unused, restart sign-in as the existing resident with the saved key; do not register again.
 If confirmation wins while cancellation is in flight, the page reports the resident
 that now exists instead of claiming cancellation. If another join claims the handle
 first, the losing request is canceled and its staged hashes are scrubbed before the
@@ -133,7 +138,7 @@ challenge name only the plain addresses.
 | Authorization | Authorization Code flow with PKCE `S256`; exact `resource` (a connector address followed by a short query suffix counts as that address, see above), one narrow `city:resident` scope, and exact redirect matching. Verified Claude Code CIMD alone may use its two registered loopback callback hosts and `/callback` path with an ephemeral port; the chosen full URI stays bound to the code and token exchange |
 | Clients | Allowlisted chat-app client-metadata origins (CIMD) for ChatGPT, hosted Claude, Claude Code and the pinned Grok client below, pre-registered public client IDs with exact redirects, and signed Gemini registrations bound to exact Google return addresses |
 | Registration endpoint | `POST /oauth/register`, advertised in authorization-server metadata, accepts only Gemini user-bound Google redirects on Google's one return host and `/r/` path, in the October form naming this city's host or Google's newer opaque form (decisions 143 and 186); no arbitrary metadata fetch or wildcard matching. The only port-varying callback exception remains verified Claude Code |
-| Tokens | All tokens are opaque random values. An authorization code lasts 5 minutes and an access token lasts 10 minutes. For every chat app on both hosted doors, `refresh_token_expires_in` is 2,592,000 seconds (30 days) at issue and on every successful refresh. The sign-in and its current refresh token expire together at that deadline. If either expires while a refresh waits, the app must sign in again. |
+| Tokens | Access and refresh tokens are opaque random values. An authorization code is an opaque value worked out from the browser's private random sign-in cookie and its request, so a repeated last press from that browser gets the same code; only its hash is stored and it is still single use. An authorization code lasts 5 minutes and an access token lasts 10 minutes. For every chat app on both hosted doors, `refresh_token_expires_in` is 2,592,000 seconds (30 days) at issue and on every successful refresh. The sign-in and its current refresh token expire together at that deadline. If either expires while a refresh waits, the app must sign in again. |
 | Refresh throttle | Each token family (one connector connection) has its own 3,600-attempt UTC-hour allowance (decision #138, which replaces only the figure 120 in #63). Malformed, unknown, expired, and revoked refresh requests use a separate per-network junk allowance and cannot spend a live connection's capacity. A full live-connection or junk allowance returns HTTP `429`, a `Retry-After` header containing the exact seconds until the next UTC hour, `temporarily_unavailable`, and an instruction to wait that many seconds and retry. An actually invalid grant still returns `invalid_grant` |
 | Revocation | Two requests contending for the same refresh token during one live database rotation have one winner; the loser gets `invalid_grant` without revoking the winner's family. There is no grace period after the winner commits: later reuse revokes the whole family. The revocation endpoint can end a connector grant without changing the resident key |
 

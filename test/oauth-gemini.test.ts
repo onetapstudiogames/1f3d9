@@ -308,6 +308,22 @@ test('Gemini signup, existing-resident, and pairing success return one private e
   await assertGeminiReturnPage(paired, SECOND_REDIRECT, state)
 })
 
+test('a repeated Gemini approval shows the same return link with the same code', async () => {
+  const { app, memory } = fixture()
+  const id = await client(app, [REDIRECT, SECOND_REDIRECT])
+  const session = await geminiSession(app, id, 'gemini-repeat-state')
+  const link = () => browserPost(app, session, { action: 'link', csrf: session.csrf, resident_key: EXISTING_KEY })
+  const first = await assertGeminiReturnPage(await link(), SECOND_REDIRECT, 'gemini-repeat-state')
+  const repeat = await assertGeminiReturnPage(await link(), SECOND_REDIRECT, 'gemini-repeat-state')
+  assert.equal(repeat.searchParams.get('code'), first.searchParams.get('code'))
+
+  const rekeyed = fixture({ GEMINI_DCR_SIGNING_KEY: randomBytes(32).toString('hex') }, memory)
+  const refused = await browserPost(rekeyed.app, session, { action: 'link', csrf: session.csrf, resident_key: EXISTING_KEY })
+  assert.equal(refused.status, 400)
+  assert.equal(refused.headers.get('location'), null)
+  assert.doesNotMatch(await refused.text(), /1f3d9_ac_/u)
+})
+
 test('Gemini signing key loss stops new registration and rechecks issued IDs at token exchange and refresh', async () => {
   const { app, memory } = fixture()
   const id = await client(app)
