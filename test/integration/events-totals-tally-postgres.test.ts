@@ -9,7 +9,7 @@ import test from 'node:test'
 import type { Pool } from 'pg'
 import type { EventsTotalsQuery } from '../../src/events-totals-tally.ts'
 import { FEED_ROOM_EVENT_KINDS, feedRoomEventLateralSql, feedRoomIdsSql } from '../../src/feed-rooms.ts'
-import { FOUNDER, GROWER, NEIGHBOUR, type CityApp } from '../helpers/abilities-fixtures.ts'
+import { FOUNDER, GROWER, NEIGHBOUR } from '../helpers/abilities-fixtures.ts'
 import {
   assertKeptMatchesList,
   changeMarker,
@@ -23,10 +23,8 @@ import {
   type EventSeed,
 } from '../helpers/events-totals-fixtures.ts'
 import {
-  bearer,
   resetCity,
   startNoteSuiteDatabase,
-  withNoteSuiteQueryObserver,
 } from '../helpers/note-suite-fixtures/postgres.ts'
 
 const RESIDENTS = [FOUNDER, GROWER, NEIGHBOUR] as const
@@ -165,35 +163,6 @@ function seededRandom(seed: number): () => number {
     state = (Math.imul(state, 1_664_525) + 1_013_904_223) >>> 0
     return state / 2 ** 32
   }
-}
-
-type Served = Readonly<{ path: string; reader: string; status: number; headers: string; body: string }>
-
-const SERVED_HEADERS = ['content-type', 'cache-control', 'vary', 'etag'] as const
-
-// Every read the app serves for these paths, with the SQL it sent: status, the
-// caching headers and the exact body text.
-async function serve(
-  app: CityApp,
-  reads: ReadonlyArray<Readonly<{ path: string; secret: string | null }>>,
-  statements: string[],
-): Promise<readonly Served[]> {
-  const served: Served[] = []
-  for (const read of reads) {
-    await withNoteSuiteQueryObserver(text => { statements.push(text); return text }, async () => {
-      const response = await app.request(`http://city.test${read.path}`, {
-        headers: read.secret === null ? {} : { authorization: `Bearer ${read.secret}` },
-      })
-      served.push(Object.freeze({
-        path: read.path,
-        reader: read.secret === null ? 'anyone' : 'signed in',
-        status: response.status,
-        headers: SERVED_HEADERS.map(name => `${name}=${response.headers.get(name) ?? ''}`).join('; '),
-        body: await response.text(),
-      }))
-    })
-  }
-  return Object.freeze(served)
 }
 
 test('the kept events tally against real PostgreSQL', { timeout: 1_800_000 }, async t => {
@@ -687,68 +656,6 @@ test('the kept events tally against real PostgreSQL', { timeout: 1_800_000 }, as
         if (step % 3 === 0 || step === steps - 1) await assertKeptMatchesList(pool, `model step ${step}`)
       }
       await foldAndMatch(pool, 'model end')
-    })
-    await t.test("no read uses the tally: every events answer, the window's own reads and other city-wide reads are byte for byte the same with the tally absent, empty, full or wrong", async () => {
-      const { default: app } = await import('../../src/index.ts') as { default: CityApp }
-      const rooms = await cityWithRooms(pool)
-      const thing = await insertThing(pool, rooms.westRoomId)
-      await setFeed(pool, rooms.westRoomId, true)
-      await insertEvents(pool, Array.from({ length: 30 }, (_, index) => ({
-        kind: ['note', 'thing_edited', 'action', 'transfer', 'line_said'][index % 5]!,
-        actor: index % 3 === 0 ? NEIGHBOUR.handle : FOUNDER.handle,
-        detail: index % 5 === 1 ? { thing_id: thing, description: `edit ${index}` }
-          : index % 5 === 2 ? { applied_public_activity: [content(index % 2 ? rooms.westRoomId : rooms.eastRoomId)] }
-            : { place_id: index % 2 ? rooms.westRoomId : rooms.eastRoomId, body: `item ${index}` },
-      })))
-      const muted = await app.request('http://city.test/api/me/settings', {
-        method: 'PATCH', headers: bearer(GROWER.secret), body: JSON.stringify({ mute: { type: 'resident', id: NEIGHBOUR.id } }),
-      })
-      assert.equal(muted.status, 200, await muted.text())
-      const ids = (await pool.query<{ id: number }>('SELECT id FROM events ORDER BY id')).rows.map(row => Number(row.id))
-      const middle = ids[Math.floor(ids.length / 2)]!
-      const marker = await changeMarker(pool)
-      const reads: Array<Readonly<{ path: string; secret: string | null }>> = []
-      // The events list as callers and MCP browse view=events read it: first page,
-      // older pages, newer pages, kinds, actor and place filters, and marker reads.
-      for (const secret of [null, GROWER.secret]) {
-        for (const path of [
-          '/api/events', '/api/events?limit=5', `/api/events?limit=5&before_id=${middle}`,
-          `/api/events?limit=5&after_id=${middle}`, '/api/events?kind=note', '/api/events?kind=thing_edited',
-          '/api/events?kind=action&limit=3', `/api/events?actor=${NEIGHBOUR.handle}`,
-          `/api/events?place_id=${rooms.eastRoomId}`, `/api/events?after_change_marker=${marker}`,
-          '/api/events?hidden=outline&limit=4',
-        ]) reads.push({ path, secret })
-      }
-      // The window's own history reads (src/window-client/program/33-agreements-and-history-controls.ts).
-      for (const path of [
-        '/api/events?limit=50', `/api/events?limit=50&within_place_id=${rooms.continentId}`,
-        `/api/events?limit=50&actor=${FOUNDER.handle}`, `/api/events?limit=50&before_id=${middle}`,
-        `/api/events?limit=50&before_id=${ids.at(-1)}&after_id=${ids[2]}`,
-        `/api/events?limit=50&after_change_marker=${marker}`,
-        `/api/events?limit=50&within_place_id=${rooms.continentId}&after_change_marker=${marker}`,
-      ]) reads.push({ path, secret: null })
-      // Other city-wide reads that count feed rooms or events.
-      for (const path of ['/api/changes', '/api/changes?since=0&limit=20']) reads.push({ path, secret: null })
-
-      const statements: string[] = []
-      await pool.query('DROP TABLE events_totals_tally; DROP TABLE events_totals_state')
-      const asMain = await serve(app, reads, statements)
-      assert.ok(asMain.every(read => read.status === 200), JSON.stringify(asMain.filter(read => read.status !== 200)))
-      assert.ok(asMain.some(read => read.body.includes('"left_out_feed_rooms":{"count":')), 'the reads count a feed room')
-
-      await pool.query(migration)
-      assert.deepEqual(await serve(app, reads, statements), asMain, 'the tally present and empty')
-      await foldAll(pool)
-      const checked = await check.runHourlyEventsTotalsCheck(db, new Date('2026-11-14T03:00:00Z'))
-      assert.equal(checked.state === 'recorded' && checked.trusted, true)
-      assert.deepEqual(await serve(app, reads, statements), asMain, 'the tally full, checked and trusted')
-      await pool.query(`UPDATE events_totals_tally SET items = items + 1000, text_bytes = text_bytes + 7`)
-      await pool.query('UPDATE events_totals_state SET trusted = TRUE')
-      assert.deepEqual(await serve(app, reads, statements), asMain, 'the tally wrong and still marked trusted')
-
-      assert.ok(statements.length > reads.length * 3, `observed ${statements.length} statements`)
-      const touching = statements.filter(text => /events_totals/iu.test(text))
-      assert.deepEqual(touching, [], 'no read statement touches the tally')
     })
   } finally {
     await postgres.stop()

@@ -5,8 +5,14 @@
 import assert from 'node:assert/strict'
 import type { Pool } from 'pg'
 import type { EventsTotalsDatabase, EventsTotalsQuery } from '../../src/events-totals-tally.ts'
-import { EVENTS_TALLY_TOTALS_SQL } from '../../src/events-totals-tally.ts'
-import { loadPublicEventCollectionRows } from '../../src/public-pagination.ts'
+import { EVENTS_TALLY_READER_TOTALS_SQL, EVENTS_TALLY_TOTALS_SQL } from '../../src/events-totals-tally.ts'
+import {
+  loadPublicEventCollectionRows,
+  loadPublicEventKeptCollectionRows,
+  type PublicEventCollectionRows,
+  type PublicEventFilters,
+  type PublicPage,
+} from '../../src/public-pagination.ts'
 
 type Rows = readonly Record<string, unknown>[]
 
@@ -129,4 +135,41 @@ export async function tallyState(pool: Pool): Promise<Readonly<Record<string, un
 export async function changeMarker(pool: Pool): Promise<string> {
   const rows = await pool.query('SELECT current_change_id::text AS marker FROM public_change_state')
   return String(rows.rows[0]!.marker)
+}
+
+export type KeptReadComparison = Readonly<{ kept: PublicEventCollectionRows; freshChanges: number }>
+
+/**
+ * One events list read both ways in one repeatable read snapshot: the kept statement
+ * the route sends while the count may be used (src/events-totals-read.ts), and today's
+ * full count. The kept one must really answer (the gate was open) and every row, total
+ * and left-out count must be equal. Returns how many change rows lay past the kept
+ * marker in that snapshot, the part the kept read counted in full.
+ */
+export async function assertKeptReadMatchesList(
+  pool: Pool,
+  filters: PublicEventFilters,
+  page: PublicPage,
+  label: string,
+): Promise<KeptReadComparison> {
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY')
+    const query = async (text: string, params: readonly unknown[]) => (
+      (await client.query(text, [...params])).rows as Record<string, unknown>[]
+    )
+    const kept = await loadPublicEventKeptCollectionRows(query, filters, page, EVENTS_TALLY_READER_TOTALS_SQL)
+    const today = await loadPublicEventCollectionRows(query, filters, page)
+    assert.ok(kept !== null, `${label}: the kept count was not used`)
+    assert.deepEqual(kept, today, label)
+    const fresh = await client.query<{ fresh: string }>(
+      `SELECT count(*)::text AS fresh FROM public_change_log change, events_totals_state state
+       WHERE state.singleton AND change.change_id > state.kept_change_id`,
+    )
+    await client.query('COMMIT')
+    return Object.freeze({ kept, freshChanges: Number(fresh.rows[0]!.fresh) })
+  } finally {
+    await client.query('ROLLBACK').catch(() => undefined)
+    client.release()
+  }
 }
