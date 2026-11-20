@@ -13,8 +13,13 @@ const MAX_CHRONOLOGICAL_WINDOW_MS = 2 * 60 * 60 * 1_000
 // pause between reads keeps a whole run at or under 150 a minute, leaving room for
 // someone reading logs by hand with the same account.
 const REQUEST_PAUSE_MS = 400
-// A 429 or a brief Vercel 5xx is retried for the same window; the limit resets within 60s.
+// A 429, a brief Vercel 5xx, a read timeout, or a network error is retried for the same
+// window; the limit resets within 60s.
 const RETRYABLE_STATUSES: ReadonlySet<number> = new Set([429, 500, 502, 503, 504])
+// One read covers the request and its whole body. 971 live reads on 2026-11-20 took a
+// median of 1s, a 99th percentile of 5.6s and at most 18s, and one GitHub run saw a read
+// pass 20s, so each read gets 60s before it counts as a timeout and is retried.
+const REQUEST_TIMEOUT_MS = 60_000
 const MAX_READ_TRIES = 6
 const FIRST_RETRY_WAIT_MS = 5_000
 const MAX_RETRY_WAIT_MS = 60_000
@@ -109,19 +114,46 @@ function failureRow(value: unknown): VercelFailureRow | null {
   return Object.freeze({ ...row, requestId, timestamp }) as VercelFailureRow
 }
 
-async function fetchWithRetry(input: FailureFetchInput & { readonly pace: Pace }, url: URL): Promise<Response> {
+// Only our own per-read timeout and a network failure are transient; any other thrown
+// error, including an abort we did not cause, still fails at once.
+function transientCause(error: unknown): string | null {
+  if (error instanceof DOMException && error.name === 'TimeoutError') return 'a timeout'
+  if (error instanceof TypeError) return 'a network error'
+  return null
+}
+
+async function readBodyWithRetry(input: FailureFetchInput & { readonly pace: Pace }, url: URL): Promise<string> {
   for (let tries = 1; ; tries += 1) {
     await input.pace()
-    const response = await (input.fetcher ?? fetch)(url, {
-      headers: { authorization: `Bearer ${input.token}`, accept: 'application/json' },
-      signal: AbortSignal.timeout(20_000),
-    })
-    if (response.ok || !RETRYABLE_STATUSES.has(response.status)) return response
-    await response.body?.cancel()
-    if (tries >= MAX_READ_TRIES) {
-      throw new Error(`Vercel request-log read failed with HTTP ${response.status} after ${tries} tries`)
+    let cause: string
+    let retryAfter: string | null = null
+    try {
+      const response = await (input.fetcher ?? fetch)(url, {
+        headers: { authorization: `Bearer ${input.token}`, accept: 'application/json' },
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      })
+      if (response.ok) {
+        if (Number(response.headers.get('content-length') ?? 0) > MAX_RESPONSE_BYTES) {
+          await response.body?.cancel()
+          throw new Error('Vercel request-log response exceeded the export size limit')
+        }
+        return await response.text()
+      }
+      await response.body?.cancel()
+      if (!RETRYABLE_STATUSES.has(response.status)) {
+        throw new Error(`Vercel request-log read failed with HTTP ${response.status}`)
+      }
+      cause = `HTTP ${response.status}`
+      retryAfter = response.headers.get('retry-after')
+    } catch (error) {
+      const transient = transientCause(error)
+      if (transient === null) throw error
+      cause = transient
     }
-    await (input.sleep ?? realSleep)(retryWaitMs(response.headers.get('retry-after'), tries))
+    if (tries >= MAX_READ_TRIES) {
+      throw new Error(`Vercel request-log read failed with ${cause} after ${tries} tries`)
+    }
+    await (input.sleep ?? realSleep)(retryWaitMs(retryAfter, tries))
   }
 }
 
@@ -137,13 +169,7 @@ async function readWindow(
   url.searchParams.set('endDate', String(endMs))
   url.searchParams.set('statusCode', input.statusClass)
   url.searchParams.set('environment', 'production')
-  const response = await fetchWithRetry(input, url)
-  if (!response.ok) throw new Error(`Vercel request-log read failed with HTTP ${response.status}`)
-  const declaredBytes = Number(response.headers.get('content-length') ?? 0)
-  if (declaredBytes > MAX_RESPONSE_BYTES) {
-    throw new Error('Vercel request-log response exceeded the export size limit')
-  }
-  const bodyText = await response.text()
+  const bodyText = await readBodyWithRetry(input, url)
   if (Buffer.byteLength(bodyText, 'utf8') > MAX_RESPONSE_BYTES) {
     throw new Error('Vercel request-log response exceeded the export size limit')
   }
