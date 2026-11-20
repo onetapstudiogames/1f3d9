@@ -127,13 +127,21 @@ preserved in [archive/2026-08/RESOLVED_QUESTIONS.md](archive/2026-08/RESOLVED_QU
   whether to revoke the export role's v2 grant.
 - Report only: the reference's list of excluded private snapshot classes has never
   named private community-tool submissions or chance day secrets.
-- [ ] Events list settled tally (decision #196), step 1 of 2: after the migration and
-  merge, read the hourly `events_totals_check` lines for a few days. Pass is zero
-  `events_totals_mismatch` lines; record `full_ms`, `kept_ms_max`, `left_out_by_key`,
-  `things_moved_since_last_check` and `feed_rooms_changed` to show which cases the
-  live check covered. Only then does step 2, a separate reviewed PR, let reads use the
-  tally behind its trust flag; that reader must run with `jit` off, as the step and the
-  check do, or JIT compilation (about a second at real size) eats the saving. The one-room events reads (`place_id` with no kind),
+- [ ] Events list settled tally (decision #196). Step 1 ran clean from 2026-11-12: the
+  state row read on 2026-11-20 showed generation 1, caught up since 2026-11-12 17:55Z, no
+  mismatch ever, trusted. Step 2 lets the unfiltered and kind-only reads take their totals
+  from the tally while it is trusted; its pull request merges only on the owner's word,
+  and decision #196 locks then. JIT is not available on the live
+  database (`pg_jit_available()` false, measured 2026-11-20), so the reader sets nothing
+  about it; the step and the check keep `jit = off` for servers that have JIT. On a
+  local server with JIT, the reader's statement took about 2 seconds at every size tried
+  (5,000 to 900,000 events), nearly all of it compiling, and today's statement took 1.9 to
+  8.3 seconds, so a move to a database with JIT needs `jit = off` on the exact reads first.
+  After the merge, measure as `city-ops/fixes/read-costs-2026-11-11.md` did: full scans of
+  `events` and `things_pkey` lookups across two 15-minute windows before and after;
+  `/api/events` durations by caller and call shape; the 503 count on `/api/events` and the
+  409 count on marker reads; and the hourly check lines continuing.
+  The one-room events reads (`place_id` or `within_place_id` with no `within_seconds`),
   which already time out, are a separate fix after that.
 - [ ] Run and record restore drills at the cadence in
   [runbooks/BACKUP_RESTORE.md](runbooks/BACKUP_RESTORE.md).
