@@ -454,3 +454,149 @@ test('one export spaces every request through one shared pause that stays under 
   assert.ok(pauses[0]! >= MINUTE_MS / DOCUMENTED_REQUEST_LOG_LIMIT_PER_MINUTE)
   assert.equal(maxActivePauses, 1, 'the four parallel scans share one pace')
 })
+
+function timeoutAbort(): DOMException {
+  return new DOMException('The operation was aborted due to timeout', 'TimeoutError')
+}
+
+function networkFailure(): TypeError {
+  return new TypeError('fetch failed')
+}
+
+function bodyThatTimesOut(): Response {
+  return new Response(new ReadableStream({ start(controller) { controller.error(timeoutAbort()) } }))
+}
+
+test('failure export retries the same window after a read timeout or a network error', async () => {
+  for (const [label, fail] of [
+    ['timeout before headers', async (): Promise<Response> => { throw timeoutAbort() }],
+    ['network error', async (): Promise<Response> => { throw networkFailure() }],
+    ['timeout while reading the body', async (): Promise<Response> => bodyThatTimesOut()],
+  ] as const) {
+    const urls: string[] = []
+    let calls = 0
+    const { sleep, waits } = recordingSleep()
+    const rows = await fetchVercelFailureRows({
+      fetcher: async input => {
+        urls.push(String(input))
+        calls += 1
+        return calls === 1 ? fail() : response([{ requestId: 'after-retry', timestamp: 80, statusCode: 500 }])
+      },
+      sleep, token: 'test-token', teamId: 'team', project: '1f3d9', statusClass: '5xx',
+      startMs: 70, endMs: 100,
+    })
+
+    assert.deepEqual(rows.map(row => row.requestId), ['after-retry'], label)
+    assert.equal(urls.length, 2, label)
+    assert.equal(urls[0], urls[1], `${label} retries the same window`)
+    assert.ok(waits.includes(5_000), `${label} waits the first backoff step: ${JSON.stringify(waits)}`)
+  }
+})
+
+test('failure export gives up on repeated timeouts or network errors on the 429 ladder, naming the cause and tries', async () => {
+  for (const [cause, thrown] of [['a timeout', timeoutAbort], ['a network error', networkFailure]] as const) {
+    const { sleep, waits } = recordingSleep()
+    let calls = 0
+    await assert.rejects(fetchVercelFailureRows({
+      fetcher: async () => {
+        calls += 1
+        throw thrown()
+      },
+      sleep, token: 'test-token', teamId: 'team', project: '1f3d9', statusClass: '5xx',
+      startMs: 70, endMs: 100,
+    }), error => {
+      assert.equal(String(error), `Error: Vercel request-log read failed with ${cause} after 6 tries`)
+      return true
+    })
+
+    assert.equal(calls, 6, `${cause}: six tries`)
+    assert.deepEqual(waits.filter(ms => ms >= 1_000), [5_000, 10_000, 20_000, 40_000, 60_000], cause)
+  }
+})
+
+test('timeouts, network errors and HTTP retries share one six-try limit for a window', async () => {
+  const failures = [
+    async (): Promise<Response> => { throw timeoutAbort() },
+    async (): Promise<Response> => status(429),
+    async (): Promise<Response> => { throw networkFailure() },
+    async (): Promise<Response> => status(503),
+    async (): Promise<Response> => bodyThatTimesOut(),
+    async (): Promise<Response> => { throw networkFailure() },
+  ]
+  let calls = 0
+  await assert.rejects(fetchVercelFailureRows({
+    fetcher: async () => failures[calls++]!(),
+    sleep: noSleep, token: 'test-token', teamId: 'team', project: '1f3d9', statusClass: '5xx',
+    startMs: 70, endMs: 100,
+  }), /^Error: Vercel request-log read failed with a network error after 6 tries$/u)
+  assert.equal(calls, 6)
+})
+
+test('a window retried after timeouts and network errors adds no duplicate rows and loses none', async () => {
+  const seen = new Map<string, number>()
+  const rows = await fetchVercelFailureRows({
+    fetcher: async input => {
+      const key = windowKey(new URL(String(input)))
+      const attempt = (seen.get(key) ?? 0) + 1
+      seen.set(key, attempt)
+      if (key === '0-29999') {
+        if (attempt === 1) throw timeoutAbort()
+        return response([{ requestId: 'a', timestamp: 100, statusCode: 500 }, { requestId: 'c', timestamp: 20_000, statusCode: 500 }], true)
+      }
+      if (key === '0-14999') {
+        if (attempt === 1) throw networkFailure()
+        return response([{ requestId: 'a', timestamp: 100, statusCode: 500 }, { requestId: 'b', timestamp: 200, statusCode: 500 }])
+      }
+      if (key === '15000-29999') {
+        if (attempt === 1) return bodyThatTimesOut()
+        return response([{ requestId: 'c', timestamp: 20_000, statusCode: 500 }, { requestId: 'd', timestamp: 29_999, statusCode: 500 }])
+      }
+      throw new Error(`unexpected window ${key}`)
+    },
+    sleep: noSleep, token: 'test-token', teamId: 'team', project: '1f3d9', statusClass: '5xx',
+    startMs: 0, endMs: 29_999,
+  })
+
+  assert.deepEqual(rows.map(row => row.requestId), ['a', 'b', 'c', 'd'])
+  assert.deepEqual(Object.fromEntries(seen), { '0-29999': 2, '0-14999': 2, '15000-29999': 2 })
+})
+
+test('failure export still fails at once on every failure that is not transient', async () => {
+  const cases: readonly (readonly [string, () => Promise<Response>, RegExp])[] = [
+    ['HTTP 422', async () => status(422), /^Error: Vercel request-log read failed with HTTP 422$/u],
+    ['an abort that is not our timeout', async () => { throw new DOMException('aborted', 'AbortError') }, /aborted/u],
+    ['an unexpected fetcher error', async () => { throw new Error('fake programming fault') }, /fake programming fault/u],
+    ['a body that is not JSON', async () => new Response('not json'), /was not JSON/u],
+    ['a body with an invalid shape', async () => Response.json([]), /invalid shape/u],
+    ['a body with an invalid rows page', async () => Response.json({ rows: [] }), /invalid rows page/u],
+    ['a row without an id', async () => response([{ timestamp: 80 }]), /lacked an id or timestamp/u],
+    ['a declared oversize response', async () => new Response('{}', { headers: { 'content-length': String(6 * 1024 * 1024) } }), /exceeded the export size limit/u],
+    ['an actual oversize response', async () => new Response('x'.repeat(5 * 1024 * 1024 + 1)), /exceeded the export size limit/u],
+    ['a row outside its window', async () => response([{ requestId: 'late', timestamp: 101, statusCode: 500 }]), /outside the requested time window/u],
+  ]
+  for (const [label, reply, expected] of cases) {
+    let calls = 0
+    const { sleep, waits } = recordingSleep()
+    await assert.rejects(fetchVercelFailureRows({
+      fetcher: async () => {
+        calls += 1
+        return reply()
+      },
+      sleep, token: 'test-token', teamId: 'team', project: '1f3d9', statusClass: '5xx',
+      startMs: 70, endMs: 100,
+    }), expected, label)
+    assert.equal(calls, 1, `${label} is not retried`)
+    assert.deepEqual(waits.filter(ms => ms >= 1_000), [], `${label} does not wait a backoff`)
+  }
+
+  let sameStampCalls = 0
+  await assert.rejects(fetchVercelFailureRows({
+    fetcher: async () => {
+      sameStampCalls += 1
+      return response(Array.from({ length: 50 }, (_, index) => ({ requestId: `same-${index}`, timestamp: 90 })), true)
+    },
+    sleep: noSleep, token: 'test-token', teamId: 'team', project: '1f3d9', statusClass: '5xx',
+    startMs: 90, endMs: 90,
+  }), /more than 50 failure rows share timestamp 90/u)
+  assert.equal(sameStampCalls, 1, 'more than 50 rows on one timestamp is not retried')
+})
