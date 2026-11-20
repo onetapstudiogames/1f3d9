@@ -13,12 +13,14 @@ function response(rows: readonly Record<string, unknown>[], hasMoreRows = false)
   return Response.json({ rows, hasMoreRows })
 }
 
+const noSleep = async (): Promise<void> => {}
+
 test('failure export fails closed when more than one API page shares one millisecond', async () => {
   await assert.rejects(fetchVercelFailureRows({
     fetcher: async () => response(Array.from({ length: 50 }, (_, index) => ({
       requestId: `same-${index}`, timestamp: 90, statusCode: 500,
     })), true),
-    token: 'test-token', teamId: 'team', project: '1f3d9', statusClass: '5xx',
+    sleep: noSleep, token: 'test-token', teamId: 'team', project: '1f3d9', statusClass: '5xx',
     startMs: 90, endMs: 90,
   }), /more than 50 failure rows share timestamp 90/iu)
 })
@@ -26,7 +28,7 @@ test('failure export fails closed when more than one API page shares one millise
 test('failure export returns an empty list for a complete empty window', async () => {
   const rows = await fetchVercelFailureRows({
     fetcher: async () => response([]),
-    token: 'test-token', teamId: 'team', project: '1f3d9', statusClass: '4xx',
+    sleep: noSleep, token: 'test-token', teamId: 'team', project: '1f3d9', statusClass: '4xx',
     startMs: 70, endMs: 100,
   })
 
@@ -38,7 +40,7 @@ test('failure export normalizes live Vercel ISO timestamps to epoch milliseconds
     fetcher: async () => response([{
       requestId: 'iso-time', timestamp: '2026-09-10T12:00:00.123Z', statusCode: 500,
     }]),
-    token: 'test-token', teamId: 'team', project: '1f3d9', statusClass: '5xx',
+    sleep: noSleep, token: 'test-token', teamId: 'team', project: '1f3d9', statusClass: '5xx',
     startMs: 1_789_041_600_000, endMs: 1_789_041_600_999,
   })
 
@@ -52,7 +54,7 @@ test('daily export protects the rolling retention edge with gapless oldest-first
       urls.push(new URL(String(input)))
       return response([])
     },
-    token: 'test-token', teamId: 'team', project: '1f3d9', statusClass: '4xx',
+    sleep: noSleep, token: 'test-token', teamId: 'team', project: '1f3d9', statusClass: '4xx',
     startMs: 70, endMs: 100_070,
   })
 
@@ -73,7 +75,7 @@ test('oldest-first export splits a truncated window and reads the older half fir
       urls.push(new URL(String(input)))
       return replies.shift()!
     },
-    token: 'test-token', teamId: 'team', project: '1f3d9', statusClass: '5xx',
+    sleep: noSleep, token: 'test-token', teamId: 'team', project: '1f3d9', statusClass: '5xx',
     startMs: 0, endMs: 29_999,
   })
 
@@ -102,7 +104,7 @@ test('oldest-first export retains an edge row that a later rolling-retention rea
       providerNow += 50
       return response(retained)
     },
-    token: 'test-token', teamId: 'team', project: '1f3d9', statusClass: '5xx',
+    sleep: noSleep, token: 'test-token', teamId: 'team', project: '1f3d9', statusClass: '5xx',
     startMs: 0, endMs: 100_000,
   })
 
@@ -114,7 +116,7 @@ test('failure export reports HTTP failures without including provider response t
   const credential = `1f3d9_sk_${'ab'.repeat(24)}`
   await assert.rejects(fetchVercelFailureRows({
     fetcher: async () => new Response(`private provider detail ${credential}`, { status: 400 }),
-    token: credential, teamId: 'team', project: '1f3d9', statusClass: '5xx',
+    sleep: noSleep, token: credential, teamId: 'team', project: '1f3d9', statusClass: '5xx',
     startMs: 70, endMs: 100,
   }), error => {
     assert.match(String(error), /HTTP 400/u)
@@ -240,6 +242,7 @@ test('one run reads both configured projects and classes into dated sanitized JS
   try {
     const result = await runFailureLogExport({
       environment: { VERCEL_TOKEN: 'test-token', VERCEL_TEAM_ID: 'test-team' },
+      sleep: noSleep,
       fetcher: async input => {
         urls.push(new URL(String(input)))
         return response([])
@@ -288,4 +291,166 @@ test('daily workflow exports both projects and both failure classes to a retaine
   assert.match(workflow, /logs\/failures/u)
   assert.match(workflow, /upload-artifact@[0-9a-f]{40}/u)
   assert.match(workflow, /retention-days:\s*(?:[3-9][0-9]|[1-9][0-9]{2,})/u)
+  // A paced read of a busy day took about 26 minutes live on 2026-11-20.
+  const timeoutMinutes = Number(/timeout-minutes:\s*(\d+)/u.exec(workflow)?.[1])
+  assert.ok(timeoutMinutes >= 60, `the export job needs room for a paced, retried day, got ${timeoutMinutes}`)
+})
+
+const MINUTE_MS = 60_000
+const DOCUMENTED_REQUEST_LOG_LIMIT_PER_MINUTE = 240
+
+function status(code: number, headers: Record<string, string> = {}): Response {
+  return new Response('provider detail', { status: code, headers })
+}
+
+function windowKey(url: URL): string {
+  return `${url.searchParams.get('startDate')}-${url.searchParams.get('endDate')}`
+}
+
+function recordingSleep(): { readonly sleep: (ms: number) => Promise<void>; readonly waits: number[] } {
+  const waits: number[] = []
+  return { waits, sleep: async ms => { waits.push(ms) } }
+}
+
+test('failure export waits and retries the same window after HTTP 429 instead of failing', async () => {
+  const urls: string[] = []
+  const replies = [status(429), response([{ requestId: 'after-wait', timestamp: 80, statusCode: 500 }])]
+  const { sleep, waits } = recordingSleep()
+  const rows = await fetchVercelFailureRows({
+    fetcher: async input => {
+      urls.push(String(input))
+      return replies.shift()!
+    },
+    sleep, token: 'test-token', teamId: 'team', project: '1f3d9', statusClass: '5xx',
+    startMs: 70, endMs: 100,
+  })
+
+  assert.deepEqual(rows.map(row => row.requestId), ['after-wait'])
+  assert.equal(urls.length, 2)
+  assert.equal(urls[0], urls[1])
+  assert.ok(waits.some(ms => ms >= 1_000), 'a 429 without Retry-After still waits a real backoff')
+})
+
+test('failure export honours Retry-After seconds and HTTP dates on a 429', async () => {
+  const { sleep, waits } = recordingSleep()
+  const replies = [
+    status(429, { 'retry-after': '7' }),
+    status(429, { 'retry-after': new Date(Date.now() + 30_000).toUTCString() }),
+    response([]),
+  ]
+  await fetchVercelFailureRows({
+    fetcher: async () => replies.shift()!,
+    sleep, token: 'test-token', teamId: 'team', project: '1f3d9', statusClass: '4xx',
+    startMs: 70, endMs: 100,
+  })
+
+  assert.ok(waits.includes(7_000), `expected a 7000 ms wait in ${JSON.stringify(waits)}`)
+  assert.ok(waits.some(ms => ms > 27_000 && ms <= 30_000), `expected about 30000 ms in ${JSON.stringify(waits)}`)
+})
+
+test('failure export grows its 429 backoff, caps each wait, and gives up naming the status and tries', async () => {
+  const { sleep, waits } = recordingSleep()
+  let calls = 0
+  await assert.rejects(fetchVercelFailureRows({
+    fetcher: async () => {
+      calls += 1
+      return status(429, calls === 1 ? { 'retry-after': '86400' } : {})
+    },
+    sleep, token: 'test-token', teamId: 'team', project: '1f3d9', statusClass: '5xx',
+    startMs: 70, endMs: 100,
+  }), error => {
+    assert.match(String(error), /HTTP 429 after \d+ tries/u)
+    assert.match(String(error), new RegExp(`after ${calls} tries`, 'u'))
+    assert.doesNotMatch(String(error), /provider detail/u)
+    return true
+  })
+
+  assert.ok(calls >= 3 && calls <= 10, `bounded tries, got ${calls}`)
+  const backoffs = waits.filter(ms => ms >= 1_000)
+  assert.equal(backoffs.length, calls - 1)
+  assert.ok(backoffs.every(ms => ms <= MINUTE_MS), `each wait is capped: ${JSON.stringify(backoffs)}`)
+  const growing = backoffs.slice(1)
+  assert.ok(growing.every((ms, index) => index === 0 || ms >= growing[index - 1]!), 'backoff never shrinks')
+  assert.ok(growing.at(-1)! > growing[0]!, 'backoff grows')
+})
+
+test('a retried window adds no duplicate rows and loses none, even inside a split', async () => {
+  const seen = new Map<string, number>()
+  const rows = await fetchVercelFailureRows({
+    fetcher: async input => {
+      const key = windowKey(new URL(String(input)))
+      const attempt = (seen.get(key) ?? 0) + 1
+      seen.set(key, attempt)
+      if (key === '0-29999') {
+        return attempt === 1
+          ? status(429)
+          : response([{ requestId: 'a', timestamp: 100, statusCode: 500 }, { requestId: 'c', timestamp: 20_000, statusCode: 500 }], true)
+      }
+      if (key === '0-14999') {
+        return attempt === 1
+          ? status(503)
+          : response([{ requestId: 'a', timestamp: 100, statusCode: 500 }, { requestId: 'b', timestamp: 200, statusCode: 500 }])
+      }
+      if (key === '15000-29999') {
+        return attempt === 1
+          ? status(429, { 'retry-after': '1' })
+          : response([{ requestId: 'c', timestamp: 20_000, statusCode: 500 }, { requestId: 'd', timestamp: 29_999, statusCode: 500 }])
+      }
+      throw new Error(`unexpected window ${key}`)
+    },
+    sleep: noSleep, token: 'test-token', teamId: 'team', project: '1f3d9', statusClass: '5xx',
+    startMs: 0, endMs: 29_999,
+  })
+
+  assert.deepEqual(rows.map(row => row.requestId), ['a', 'b', 'c', 'd'])
+  assert.deepEqual(Object.fromEntries(seen), { '0-29999': 2, '0-14999': 2, '15000-29999': 2 })
+})
+
+test('failure export still fails at once on a non-retryable HTTP status', async () => {
+  for (const code of [400, 401, 403, 404]) {
+    let calls = 0
+    await assert.rejects(fetchVercelFailureRows({
+      fetcher: async () => {
+        calls += 1
+        return status(code)
+      },
+      sleep: noSleep, token: 'test-token', teamId: 'team', project: '1f3d9', statusClass: '5xx',
+      startMs: 70, endMs: 100,
+    }), new RegExp(`Vercel request-log read failed with HTTP ${code}$`, 'u'))
+    assert.equal(calls, 1, `HTTP ${code} is not retried`)
+  }
+})
+
+test('one export spaces every request through one shared pause that stays under the documented limit', async () => {
+  const outDir = await mkdtemp(join(tmpdir(), 'failure-log-export-'))
+  const pauses: number[] = []
+  let activePauses = 0
+  let maxActivePauses = 0
+  let fetches = 0
+  try {
+    await runFailureLogExport({
+      environment: { VERCEL_TOKEN: 'test-token', VERCEL_TEAM_ID: 'test-team' },
+      fetcher: async () => {
+        fetches += 1
+        return response([])
+      },
+      sleep: async ms => {
+        pauses.push(ms)
+        activePauses += 1
+        maxActivePauses = Math.max(maxActivePauses, activePauses)
+        await new Promise(resolveTick => setImmediate(resolveTick))
+        activePauses -= 1
+      },
+      now: new Date('2026-09-10T12:00:00.000Z'),
+      outDir,
+    })
+  } finally {
+    await rm(outDir, { recursive: true, force: true })
+  }
+
+  assert.ok(fetches > 4)
+  assert.equal(pauses.length, fetches, 'every request waits its turn')
+  assert.equal(new Set(pauses).size, 1, 'one fixed pause')
+  assert.ok(pauses[0]! >= MINUTE_MS / DOCUMENTED_REQUEST_LOG_LIMIT_PER_MINUTE)
+  assert.equal(maxActivePauses, 1, 'the four parallel scans share one pace')
 })

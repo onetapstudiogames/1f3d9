@@ -9,6 +9,15 @@ const MAX_RESPONSE_BYTES = 5 * 1024 * 1024
 const MAX_WINDOWS = 10_000
 const MIN_CHRONOLOGICAL_WINDOW_MS = 30_000
 const MAX_CHRONOLOGICAL_WINDOW_MS = 2 * 60 * 60 * 1_000
+// Vercel documents request-logs-get at 240 reads per 60 seconds per user. One shared
+// pause between reads keeps a whole run at or under 150 a minute, leaving room for
+// someone reading logs by hand with the same account.
+const REQUEST_PAUSE_MS = 400
+// A 429 or a brief Vercel 5xx is retried for the same window; the limit resets within 60s.
+const RETRYABLE_STATUSES: ReadonlySet<number> = new Set([429, 500, 502, 503, 504])
+const MAX_READ_TRIES = 6
+const FIRST_RETRY_WAIT_MS = 5_000
+const MAX_RETRY_WAIT_MS = 60_000
 const REQUIRED_PROJECTS = Object.freeze(['1f3d9', '1f3ea'] as const)
 const STATUS_CLASSES = Object.freeze(['4xx', '5xx'] as const)
 const DIAGNOSTIC_KEYS = Object.freeze([
@@ -21,6 +30,29 @@ const FUNCTION_EVENT_KEYS = Object.freeze([
 ] as const)
 
 type Fetcher = (input: URL | string, init?: RequestInit) => Promise<Response>
+type Sleep = (ms: number) => Promise<void>
+type Pace = () => Promise<void>
+
+const realSleep: Sleep = ms => new Promise(resolveSleep => { setTimeout(resolveSleep, ms) })
+
+function sharedPace(sleep: Sleep): Pace {
+  let lastTurn: Promise<void> = Promise.resolve()
+  return () => {
+    const turn = lastTurn.then(() => sleep(REQUEST_PAUSE_MS))
+    lastTurn = turn
+    return turn
+  }
+}
+
+function retryWaitMs(retryAfter: string | null, failedTries: number): number {
+  const backoff = FIRST_RETRY_WAIT_MS * 2 ** (failedTries - 1)
+  const trimmed = retryAfter?.trim() ?? ''
+  const requested = /^\d+$/u.test(trimmed)
+    ? Number(trimmed) * 1_000
+    : trimmed ? Date.parse(trimmed) - Date.now() : Number.NaN
+  const wait = Number.isFinite(requested) ? Math.max(0, requested) : backoff
+  return Math.min(MAX_RETRY_WAIT_MS, wait)
+}
 
 export interface VercelFailureRow extends Record<string, unknown> {
   readonly requestId: string
@@ -29,6 +61,8 @@ export interface VercelFailureRow extends Record<string, unknown> {
 
 export interface FailureFetchInput {
   readonly fetcher?: Fetcher
+  readonly sleep?: Sleep
+  readonly pace?: Pace
   readonly token: string
   readonly teamId: string
   readonly project: string
@@ -75,8 +109,24 @@ function failureRow(value: unknown): VercelFailureRow | null {
   return Object.freeze({ ...row, requestId, timestamp }) as VercelFailureRow
 }
 
+async function fetchWithRetry(input: FailureFetchInput & { readonly pace: Pace }, url: URL): Promise<Response> {
+  for (let tries = 1; ; tries += 1) {
+    await input.pace()
+    const response = await (input.fetcher ?? fetch)(url, {
+      headers: { authorization: `Bearer ${input.token}`, accept: 'application/json' },
+      signal: AbortSignal.timeout(20_000),
+    })
+    if (response.ok || !RETRYABLE_STATUSES.has(response.status)) return response
+    await response.body?.cancel()
+    if (tries >= MAX_READ_TRIES) {
+      throw new Error(`Vercel request-log read failed with HTTP ${response.status} after ${tries} tries`)
+    }
+    await (input.sleep ?? realSleep)(retryWaitMs(response.headers.get('retry-after'), tries))
+  }
+}
+
 async function readWindow(
-  input: FailureFetchInput,
+  input: FailureFetchInput & { readonly pace: Pace },
   startMs: number,
   endMs: number,
 ): Promise<{ readonly rows: readonly VercelFailureRow[]; readonly hasMoreRows: boolean }> {
@@ -87,10 +137,7 @@ async function readWindow(
   url.searchParams.set('endDate', String(endMs))
   url.searchParams.set('statusCode', input.statusClass)
   url.searchParams.set('environment', 'production')
-  const response = await (input.fetcher ?? fetch)(url, {
-    headers: { authorization: `Bearer ${input.token}`, accept: 'application/json' },
-    signal: AbortSignal.timeout(20_000),
-  })
+  const response = await fetchWithRetry(input, url)
   if (!response.ok) throw new Error(`Vercel request-log read failed with HTTP ${response.status}`)
   const declaredBytes = Number(response.headers.get('content-length') ?? 0)
   if (declaredBytes > MAX_RESPONSE_BYTES) {
@@ -127,6 +174,7 @@ export async function fetchVercelFailureRows(
     || input.startMs < 0 || input.endMs < input.startMs) {
     throw new Error('Vercel export time range is invalid')
   }
+  const pacedInput = { ...input, pace: input.pace ?? sharedPace(input.sleep ?? realSleep) }
   const retained = new Map<string, VercelFailureRow>()
   let windowStart = input.startMs
   let windowSize = MIN_CHRONOLOGICAL_WINDOW_MS
@@ -135,7 +183,7 @@ export async function fetchVercelFailureRows(
   const readChronologicalWindow = async (startMs: number, endMs: number): Promise<void> => {
     if (requestCount >= MAX_WINDOWS) throw new Error('Vercel chronological request-log scan exceeded its safety limit')
     requestCount += 1
-    const page = await readWindow(input, startMs, endMs)
+    const page = await readWindow(pacedInput, startMs, endMs)
     for (const row of page.rows) {
       if (row.timestamp < startMs || row.timestamp > endMs) {
         throw new Error('Vercel returned a request-log row outside the requested time window')
@@ -250,6 +298,7 @@ async function configuredProjects(): Promise<typeof REQUIRED_PROJECTS> {
 export async function runFailureLogExport(input: Readonly<{
   environment?: NodeJS.ProcessEnv
   fetcher?: Fetcher
+  sleep?: Sleep
   now?: Date
   outDir?: string
 }> = {}): Promise<Readonly<{ path: string; rowCount: number }>> {
@@ -263,9 +312,11 @@ export async function runFailureLogExport(input: Readonly<{
   const startMs = endMs - DAY_MS
   const projects = await configuredProjects()
   const fetcher = input.fetcher ?? fetch
+  const sleep = input.sleep ?? realSleep
+  const pace = sharedPace(sleep)
   const reads = projects.flatMap(project => STATUS_CLASSES.map(async statusClass => {
     const rows = await fetchVercelFailureRows({
-      fetcher, token, teamId, project, statusClass, startMs, endMs,
+      fetcher, sleep, pace, token, teamId, project, statusClass, startMs, endMs,
     })
     return rows.map(row => sanitizeFailureRow(project, row))
   }))
