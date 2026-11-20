@@ -313,7 +313,49 @@ export async function loadPublicEventCollectionRows(
   filters: PublicEventFilters,
   page: PublicPage,
 ): Promise<Readonly<PublicEventCollectionRows>> {
-  return loadEventRows(query, filters, page, true)
+  return eventCollection(await queryEventRows(query, filters, page, COUNTED_EVENT_TOTALS))
+}
+
+/**
+ * Whether the kept events count (decision #196) can answer this read's totals: the whole
+ * list or one kind. The totals never depend on before_id, after_id, limit, hidden or the
+ * reader; an actor, a place or a time window changes what they count, so those reads
+ * always count today's way.
+ */
+export function eventTotalsFromKeptCount(filters: PublicEventFilters): boolean {
+  return filters.actor == null && filters.placeId == null && filters.includeDescendants !== true
+    && (filters.withinSeconds ?? null) == null
+}
+
+const KEPT_TOTAL = /^(0|[1-9][0-9]{0,15})$/u
+
+function keptTotal(value: unknown): boolean {
+  return (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0)
+    || (typeof value === 'string' && KEPT_TOTAL.test(value) && Number.isSafeInteger(Number(value)))
+}
+
+/**
+ * The same read as loadPublicEventCollectionRows, with its totals from the kept count:
+ * `keptTotalsSql` (src/events-totals-tally.ts) is the statement's totals part. Null when
+ * the count may not be used (no state row passed its gate) or gave a total no full count
+ * could give; the caller then counts today's way.
+ */
+export async function loadPublicEventKeptCollectionRows(
+  query: PublicQueryExecutor,
+  filters: PublicEventFilters,
+  page: PublicPage,
+  keptTotalsSql: string,
+): Promise<Readonly<PublicEventCollectionRows> | null> {
+  if (!eventTotalsFromKeptCount(filters)) return null
+  const rows = await queryEventRows(query, filters, page, { kind: 'kept', sql: keptTotalsSql })
+  const first = rows[0]
+  if (!first || Number(first.kept_state_rows) !== 1) return null
+  const leftOut = first.left_out_feed_rooms
+  const roomIds = first.left_out_feed_room_ids == null ? [] : first.left_out_feed_room_ids
+  if (![first.total_items, first.total_text_bytes, leftOut].every(keptTotal) || !Array.isArray(roomIds)
+    || roomIds.some(id => !Number.isSafeInteger(Number(id)) || Number(id) < 1)
+    || (Number(leftOut) === 0) !== (roomIds.length === 0)) return null
+  return eventCollection(rows.map(({ kept_state_rows: _rows, ...row }) => row))
 }
 
 /**
@@ -326,7 +368,7 @@ export async function loadPublicEventPageRows(
   filters: PublicEventFilters,
   page: PublicPage,
 ): Promise<readonly Record<string, unknown>[]> {
-  return (await loadEventRows(query, filters, page, false)).rows
+  return eventCollection(await queryEventRows(query, filters, page, UNCOUNTED_EVENT_TOTALS)).rows
 }
 
 /** One event's counted text bytes: its string body, description and reason in detail. */
@@ -349,15 +391,19 @@ export const PUBLIC_EVENT_TOTALS_COLUMNS_SQL = `count(*) FILTER (WHERE feed.feed
          ) AS left_out_feed_room_ids`
 
 // The totals a further page leaves uncounted: the list's own totals came with its first page.
-const UNCOUNTED_EVENT_TOTALS = `SELECT 0::integer AS total_items, 0::bigint AS total_text_bytes,
+const UNCOUNTED_EVENT_TOTALS_SQL = `SELECT 0::integer AS total_items, 0::bigint AS total_text_bytes,
          0::integer AS left_out_feed_rooms, NULL::integer[] AS left_out_feed_room_ids`
 
-async function loadEventRows(
+type EventTotals = Readonly<{ kind: 'counted' | 'uncounted' } | { kind: 'kept'; sql: string }>
+const COUNTED_EVENT_TOTALS: EventTotals = Object.freeze({ kind: 'counted' })
+const UNCOUNTED_EVENT_TOTALS: EventTotals = Object.freeze({ kind: 'uncounted' })
+
+async function queryEventRows(
   query: PublicQueryExecutor,
   filters: PublicEventFilters,
   page: PublicPage,
-  counted: boolean,
-): Promise<Readonly<PublicEventCollectionRows>> {
+  totalsMode: EventTotals,
+): Promise<readonly Record<string, unknown>[]> {
   const includeDescendants = filters.includeDescendants === true
   const eventFilter = includeDescendants ? publicEventFilter(true) : PUBLIC_EVENT_FILTER
   const withClause = includeDescendants
@@ -368,21 +414,25 @@ async function loadEventRows(
        JOIN selected_places selected ON child.parent_id = selected.id
      ), totals AS (`
     : 'WITH totals AS ('
-  const totals = counted ? `SELECT ${PUBLIC_EVENT_TOTALS_COLUMNS_SQL}
+  // Only the kept mode changes the text: its own comment, the gate's column, and the
+  // passed totals. The counted and further-page texts stay as they always were.
+  const kept = totalsMode.kind === 'kept'
+  const keptColumn = kept ? ',\n       totals.state_rows AS kept_state_rows' : ''
+  const totals = totalsMode.kind === 'kept' ? totalsMode.sql : totalsMode.kind === 'counted' ? `SELECT ${PUBLIC_EVENT_TOTALS_COLUMNS_SQL}
        FROM events event
        ${PUBLIC_EVENT_FEED_ROOM_JOIN}
        /* These totals count the whole filtered list, so neither end of the page
           bounds them: not before_id, and not after_id either. */
-       WHERE ${eventFilter}` : UNCOUNTED_EVENT_TOTALS
-  const rows = await query(
-    `/* public:events */
+       WHERE ${eventFilter}` : UNCOUNTED_EVENT_TOTALS_SQL
+  return await query(
+    `${kept ? '/* public:events-kept */' : '/* public:events */'}
      ${withClause}
        ${totals}
      )
      SELECT page.id, page.change_id, page.at, page.kind, page.actor, page.detail,
        page.thing_has_drawing,
        totals.total_items, totals.total_text_bytes,
-       totals.left_out_feed_rooms, totals.left_out_feed_room_ids
+       totals.left_out_feed_rooms, totals.left_out_feed_room_ids${keptColumn}
      FROM totals
      LEFT JOIN LATERAL (
        SELECT event.id, change.change_id::text AS change_id,
@@ -406,6 +456,9 @@ async function loadEventRows(
       filters.withinSeconds ?? null, filters.afterId ?? null,
     ],
   )
+}
+
+function eventCollection(rows: readonly Record<string, unknown>[]): Readonly<PublicEventCollectionRows> {
   const first = rows[0]
   const { rows: items, total } = extractPublicCollectionRows(rows.map(row => {
     const { left_out_feed_rooms: _count, left_out_feed_room_ids: _ids, ...rest } = row

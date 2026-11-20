@@ -91,7 +91,6 @@ import {
   eventDetailTextBytes,
   extractPublicCollectionRows,
   finalizePublicPage,
-  loadPublicEventCollectionRows,
   loadPublicEventPageRows,
   parsePublicPage,
   parsePublicRangeStart,
@@ -191,6 +190,7 @@ import {
 import { mountMcpCallLogRoutes } from './mcp-call-log-routes.ts'
 import { runEachRetention } from './log-retention.ts'
 import { reportEventsTotalsFailure, runEventsTotalsMaintenance } from './events-totals-maintenance.ts'
+import { loadEventsListCollection } from './events-totals-read.ts'
 import {
   executeBudgetedExactQuery,
   isPublicExactReadBusy,
@@ -2215,7 +2215,7 @@ app.get('/api/events', async c => {
     return rows.map((stored, index) => ({ stored, moderated: moderated[index]! }))
   }
   const readEvents = async () => {
-    const collection = await loadPublicEventCollectionRows(executeBudgetedExactQuery, eventFilters, parsed)
+    const collection = await loadEventsListCollection(executeBudgetedExactQuery, eventFilters, parsed, process.env)
     const page = finalizePublicPage(collection.rows as EventRow[], parsed.limit)
     const firstPairs = await moderatedEventPairs(page.items)
     // A page the reader's mutes thinned reads further events until it is full

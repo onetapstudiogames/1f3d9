@@ -149,8 +149,10 @@ async function enterSnapshot(transaction: EventsTotalsQuery): Promise<void> {
   }
   await transaction.query(`SET LOCAL statement_timeout = '${CHECK_STATEMENT_TIMEOUT}'`)
   await transaction.query('SET LOCAL max_parallel_workers_per_gather = 0')
-  // Without this the planner's guess for the part above the kept marker switches on JIT
-  // compilation, about a second per statement at real size for a few milliseconds of work.
+  // On a server with JIT, the planner's guess for the part above the kept marker switches
+  // on JIT compilation, about a second per statement at real size for a few milliseconds
+  // of work. The live database has no JIT (pg_jit_available() false, 2026-11-20), so
+  // there this changes nothing, and the events list's reader sets nothing about it.
   await transaction.query('SET LOCAL jit = off')
 }
 
