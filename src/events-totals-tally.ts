@@ -338,9 +338,10 @@ const TALLY_FEED_IDS = feedRoomIdsSql()
  * columns match the list's own totals: total_items, total_text_bytes,
  * left_out_feed_rooms and every left-out room id (not cut to 10), plus state_rows, the
  * number of state rows the statement used. `stateGate` narrows which state row it may
- * use; with no row, the fresh part reads nothing and state_rows is 0.
+ * use; with no row, the fresh part reads nothing and state_rows is 0. `freshChanges`
+ * is the join to the change rows above the kept marker.
  */
-function eventsTallyTotalsSql(stateGate: string): string {
+function eventsTallyTotalsSql(stateGate: string, freshChanges: string): string {
   return `
   WITH tally_state AS MATERIALIZED (
     SELECT kept_change_id FROM events_totals_state WHERE singleton${stateGate}
@@ -371,7 +372,7 @@ function eventsTallyTotalsSql(stateGate: string): string {
   ), fresh AS (
     SELECT ${PUBLIC_EVENT_TOTALS_COLUMNS_SQL}
     FROM tally_state
-    JOIN public_change_log change ON change.change_id > tally_state.kept_change_id
+    ${freshChanges}
     JOIN events event ON event.id = change.event_id
     ${feedRoomEventLateralSql('event', TALLY_FEED_IDS)}
     WHERE ($1::text IS NULL OR event.kind = $1::text)
@@ -392,7 +393,8 @@ function eventsTallyTotalsSql(stateGate: string): string {
 }
 
 /** The hourly check's statement: the kept totals from the state row as it stands. */
-export const EVENTS_TALLY_TOTALS_SQL = `/* events-totals:kept */${eventsTallyTotalsSql('')}`
+export const EVENTS_TALLY_TOTALS_SQL = `/* events-totals:kept */${eventsTallyTotalsSql('',
+  'JOIN public_change_log change ON change.change_id > tally_state.kept_change_id')}`
 
 /**
  * The same totals for a caller, read only while the count may be trusted: checked and
@@ -400,7 +402,16 @@ export const EVENTS_TALLY_TOTALS_SQL = `/* events-totals:kept */${eventsTallyTot
  * Otherwise state_rows is 0 and the caller counts today's way. It is the totals part of
  * the events list's own statement (src/public-pagination.ts), so the gate, the totals and
  * the page share one snapshot.
+ *
+ * The change rows above the kept marker are also bounded by the settled marker read in
+ * the same snapshot, which every visible change row is at or below (#130), so the range
+ * holds the same rows. Bounded on both ends by values read in the statement, the planner
+ * expects a narrow range and walks it by change id; with the lower end alone it expects a
+ * third of the log, and from about 900,000 events walked every change row (about 340 ms
+ * against 4 ms, measured locally).
  */
 export const EVENTS_TALLY_READER_TOTALS_SQL = eventsTallyTotalsSql(` AND trusted AND NOT paused AND NOT held_off
-      AND caught_up_at IS NOT NULL AND rule_version = ${EVENTS_TOTALS_RULE_VERSION}`)
+      AND caught_up_at IS NOT NULL AND rule_version = ${EVENTS_TOTALS_RULE_VERSION}`,
+`JOIN public_change_log change ON change.change_id > (SELECT kept_change_id FROM tally_state)
+      AND change.change_id <= (SELECT current_change_id FROM public_change_state WHERE singleton)`)
 

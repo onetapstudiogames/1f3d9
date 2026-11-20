@@ -155,5 +155,7 @@ test('the kept statement keeps the page part of today\'s statement and adds only
   assert.equal(pagePart(kept), pagePart(today))
   assert.match(kept, /totals\.state_rows AS kept_state_rows/u)
   assert.match(kept, /FROM events_totals_state WHERE singleton AND trusted AND NOT paused AND NOT held_off\s+AND caught_up_at IS NOT NULL AND rule_version = 1/u)
+  // Both ends of the fresh range come from the statement itself, so the planner walks it by change id.
+  assert.match(kept, /change\.change_id > \(SELECT kept_change_id FROM tally_state\)\s+AND change\.change_id <= \(SELECT current_change_id FROM public_change_state WHERE singleton\)/u)
   assert.doesNotMatch(kept, /jit/iu, 'the reader sets nothing about JIT')
 })
