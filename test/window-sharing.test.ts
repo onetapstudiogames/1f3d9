@@ -165,13 +165,13 @@ test('Gazette window history stays in the window while issue shares point to the
 
   const missing = createWindowShareMetadata('https://1f3d9.com', parsed, false)
   assert.equal(missing.canonicalUrl, 'https://1f3d9.com/gazette/7')
-  assert.equal(missing.title, 'The Gazette · Issue 7 is unavailable — 1F3D9')
+  assert.equal(missing.title, 'The Gazette · Issue 7 is unavailable · 1F3D9')
   assert.match(missing.description, /not publicly available now/iu)
   assert.equal(missing.imageUrl, 'https://1f3d9.com/gazette/7/card.png')
 
   const unverified = createWindowShareMetadata('https://1f3d9.com', parsed, null)
   assert.equal(unverified.canonicalUrl, 'https://1f3d9.com/gazette/7')
-  assert.equal(unverified.title, 'The Gazette · Issue 7 could not be checked — 1F3D9')
+  assert.equal(unverified.title, 'The Gazette · Issue 7 could not be checked · 1F3D9')
   assert.match(unverified.description, /availability could not be checked right now/iu)
   assert.doesNotMatch(unverified.description, /not publicly available/iu)
   assert.equal(unverified.imageUrl, 'https://1f3d9.com/gazette/7/card.png')
@@ -184,7 +184,7 @@ test('Gazette window history stays in the window while issue shares point to the
 
   const metadata = createWindowShareMetadata('https://1f3d9.com', parsed, true)
   assert.equal(metadata.canonicalUrl, 'https://1f3d9.com/gazette/7')
-  assert.equal(metadata.title, 'The Gazette · Issue 7 — 1F3D9')
+  assert.equal(metadata.title, 'The Gazette · Issue 7 · 1F3D9')
   assert.match(metadata.description, /weekly Gazette issue/iu)
   assert.match(metadata.description, /ordinary submissions/iu)
   assert.match(metadata.description, /withdrawal notices/iu)
@@ -374,10 +374,10 @@ test('share descriptions are honest escaped excerpts and never carry resident cr
 
 test('the window share document emits complete escaped Open Graph and Twitter metadata', () => {
   const html = renderWindowShareDocument(
-    '<!doctype html><html><head><!-- WINDOW_SHARE_HEAD --><title>The City Window — 1F3D9</title></head><body></body></html>',
+    '<!doctype html><html><head><!-- WINDOW_SHARE_HEAD --><title>The City Window · 1F3D9</title></head><body></body></html>',
     {
       canonicalUrl: 'https://1f3d9.com/window/thing/401',
-      title: 'Lantern & <key> "one" — 1F3D9',
+      title: 'Lantern & <key> "one" · 1F3D9',
       description: 'A public inscription with <marks> & "quotes".',
       imageUrl: 'https://1f3d9.com/share/thing.png',
       imageAlt: 'A cream city thing card on deep green.',
@@ -385,7 +385,7 @@ test('the window share document emits complete escaped Open Graph and Twitter me
   )
 
   assert.match(html, /<link rel="canonical" href="https:\/\/1f3d9\.com\/window\/thing\/401">/u)
-  assert.match(html, /<meta property="og:title" content="Lantern &amp; &lt;key&gt; &quot;one&quot; — 1F3D9">/u)
+  assert.match(html, /<meta property="og:title" content="Lantern &amp; &lt;key&gt; &quot;one&quot; · 1F3D9">/u)
   assert.match(html, /<meta property="og:description" content="A public inscription with &lt;marks&gt; &amp; &quot;quotes&quot;\.">/u)
   assert.match(html, /<meta property="og:type" content="website">/u)
   assert.match(html, /<meta property="og:url" content="https:\/\/1f3d9\.com\/window\/thing\/401">/u)
@@ -410,7 +410,7 @@ test('live public records produce honest per-type metadata without carrying cred
     description: 'Solward describes portraits here. Nothing is presumed.',
   }), {
     canonicalUrl: 'https://1f3d9.com/window/place/310',
-    title: 'the portrait studio · Place #310 — 1F3D9',
+    title: 'the portrait studio · Place #310 · 1F3D9',
     description: 'Solward describes portraits here. Nothing is presumed.',
     imageUrl: 'https://1f3d9.com/share/place.png',
     imageAlt: 'A cream place marker on deep city green, for a live public place in 1F3D9.',
@@ -425,7 +425,7 @@ test('live public records produce honest per-type metadata without carrying cred
     createWindowShareMetadata('https://1f3d9.com', thing, {
       name: 'a cream & green sign', made_by: 'solward', body: 'Walk this way.',
     }).title,
-    'a cream & green sign · Thing #401 by solward — 1F3D9',
+    'a cream & green sign · Thing #401 by solward · 1F3D9',
   )
   assert.equal(
     createWindowShareMetadata('https://1f3d9.com', thing, {
@@ -437,7 +437,7 @@ test('live public records produce honest per-type metadata without carrying cred
     createWindowShareMetadata('https://1f3d9.com', note, {
       author: 'solward', body: `A public line ${`1f3d9_sk_${'ef'.repeat(24)}`}`,
     }).title,
-    /^Note #301 by solward — 1F3D9$/u,
+    /^Note #301 by solward · 1F3D9$/u,
   )
   assert.doesNotMatch(
     createWindowShareMetadata('https://1f3d9.com', note, {
@@ -447,7 +447,7 @@ test('live public records produce honest per-type metadata without carrying cred
   )
 
   const gone = createWindowShareMetadata('https://1f3d9.com', thing, null)
-  assert.equal(gone.title, 'Public thing #401 is unavailable — 1F3D9')
+  assert.equal(gone.title, 'Public thing #401 is unavailable · 1F3D9')
   assert.match(gone.description, /current public state/iu)
   assert.doesNotMatch(gone.description, /snapshot/iu)
 
@@ -455,7 +455,7 @@ test('live public records produce honest per-type metadata without carrying cred
     name: 'turned\u202earound',
     body: 'broken high surrogate \uD800',
   })
-  assert.equal(unsafe.title, 'Public thing · Thing #401 by an unknown resident — 1F3D9')
+  assert.equal(unsafe.title, 'Public thing · Thing #401 by an unknown resident · 1F3D9')
   assert.equal(unsafe.description, 'Open this live public thing in the city window.')
   assert.doesNotMatch(`${unsafe.title} ${unsafe.description}`, /[\u0000-\u001F\u007F-\u009F\u202A-\u202E\u2066-\u2069\uD800-\uDFFF]/u)
 })

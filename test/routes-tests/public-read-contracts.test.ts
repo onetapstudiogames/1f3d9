@@ -98,7 +98,7 @@ export function registerPublicReadContractsTests(): void {
     assert.equal(response.status, 503, 'busy exact totals must fail instead of scanning')
     assert.equal(response.headers.get('retry-after'), '1')
     assert.deepEqual(await response.json(), {
-      error: 'exact public totals are temporarily busy; retry',
+      error: 'This list is busy right now. Try again in a moment. For the event list, asking for one kind often answers sooner.',
     })
 
     reset({ scenario: 'public pagination', exactTotalsBusy: true })

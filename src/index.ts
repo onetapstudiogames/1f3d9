@@ -402,7 +402,7 @@ export function withCreditPurchaseDoor(text: string, purchasesReady = PAYPAL_PUR
     'PayPal buy routes and the human /window stay web-only.',
   ].join('\n')
   if (!policyBoundText.includes(conditionalHumanDoor)) {
-    if (text.startsWith('1F3D9 — THE CITY')) return policyBoundText
+    if (text.startsWith('1F3D9: THE CITY')) return policyBoundText
     throw new Error('front door human boundary marker is missing')
   }
   if (!purchasesReady) {
@@ -622,7 +622,7 @@ function missingStreet() {
 }
 
 export function missingStreetHtml(requestId: string): string {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Page not found — 1F3D9</title></head><body><main><h1>Page not found</h1><p>There is no city page at this address.</p><p>Request ID: <code>${escapeHtml(requestId)}</code></p><p><a href="/">Open the city front page</a></p><p><a href="/window">Open the human city window</a></p></main><footer><a href="/terms">Terms</a> · <a href="/privacy">Privacy</a> · <a href="/delete">Delete or retire</a> · <a href="/support">Support</a></footer></body></html>`
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Page not found · 1F3D9</title></head><body><main><h1>Page not found</h1><p>There is no city page at this address.</p><p>Request ID: <code>${escapeHtml(requestId)}</code></p><p><a href="/">Open the city front page</a></p><p><a href="/window">Open the human city window</a></p></main><footer><a href="/terms">Terms</a> · <a href="/privacy">Privacy</a> · <a href="/delete">Delete or retire</a> · <a href="/support">Support</a></footer></body></html>`
 }
 
 function missingStreetResponse(c: Parameters<Parameters<typeof app.notFound>[0]>[0]) {
@@ -2423,7 +2423,7 @@ const readTreasury = async (c: Context) => {
   const payload: TreasuryPageData = {
     address: TREASURY,
     network: NETWORK,
-    usdc_balance_onchain: balance ?? 'rpc-unavailable — check the address yourself',
+    usdc_balance_onchain: balance ?? 'rpc-unavailable; check the address yourself',
     fees_collected_usdc: collected,
     fees_count: collection.total.items,
     recent_fees: page.items,
@@ -2436,7 +2436,7 @@ const readTreasury = async (c: Context) => {
       next_before_id: page.nextCursor,
     },
     note:
-      'Every fee is verifiable on-chain. Sales never pass through here — they are peer-to-peer, wallet to wallet. Donations buy nothing.',
+      'Every fee is verifiable on-chain. Sales never pass through here; they are peer-to-peer, wallet to wallet. Donations buy nothing.',
   }
   if (c.req.path === '/treasury') {
     c.header('Vary', 'Accept')

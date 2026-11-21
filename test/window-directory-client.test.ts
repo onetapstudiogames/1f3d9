@@ -58,7 +58,7 @@ test('place selector is a flat numbered hierarchy with one clickable continent r
     { id: 1, depth: 0, label: 'the world · Place #1' },
     { id: 2, depth: 0, label: 'the verge · Place #2' },
     { id: 3, depth: 1, label: 'lobby · Place #3' },
-    { id: 4, depth: 2, label: 'coffee-shop — in lobby · Place #4' },
+    { id: 4, depth: 2, label: 'coffee-shop, in lobby · Place #4' },
     { id: 5, depth: 0, label: 'the harbor · Place #5' },
   ])
 })

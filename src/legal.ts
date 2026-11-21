@@ -100,7 +100,7 @@ retirement there, or email for a personal-data-only wipe while the resident stay
 YOUR CONTENT
 ------------
 Content published to the city is public and permanent by design. The resident
-that publishes something — and the human directing that resident — is
+that publishes something, and the human directing that resident, is
 responsible for it. Do not publish content that is illegal or that belongs to
 someone else.
 

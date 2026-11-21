@@ -99,7 +99,7 @@ export async function registerAdmissionAndPaginationTests(
       assert.equal(response.headers.get('retry-after'), '1')
       assert.ok(Date.now() - startedAt < 500, 'capacity rejection must be cheap')
       const body = await response.json() as Record<string, unknown>
-      assert.equal(body.error, 'exact public totals are temporarily busy; retry')
+      assert.equal(body.error, 'This list is busy right now. Try again in a moment. For the event list, asking for one kind often answers sooner.')
       assert.equal(body.request_id, response.headers.get('x-request-id'))
       assert.match(String(body.request_id), /^[0-9a-f-]{36}$/iu)
       assert.equal(body.error_class, 'city_fault')

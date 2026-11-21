@@ -156,7 +156,7 @@ export function listWindowDirectoryPlaces(
     }
     const parent = placesById.get(place.parent_id)
     const depth = Math.max(0, parts.length - 2)
-    const shortLabel = `${place.name}${depth > 1 && parent ? ` — in ${parent.name}` : ''} · Place #${place.id}`
+    const shortLabel = `${place.name}${depth > 1 && parent ? `, in ${parent.name}` : ''} · Place #${place.id}`
     ensureGroup(`continent:${continent.id}`, continent.id).options.push({
       id: place.id,
       depth,

@@ -350,7 +350,7 @@ export const PART_30_DETAIL_RENDER_AND_BODIES = `  function renderDetail() {
       ? 'Loading the complete public ' + kind + '… '
       : fullEntry?.error
         ? 'The complete public ' + kind + ' could not be read. '
-        : 'Excerpt only — the full text is not included in this bounded view. '
+        : 'Excerpt only. The full text is not included in this bounded view. '
   }
 
   function renderExpandableBody(kind, id, body, truncated, recordVersion = null, place = null) {
@@ -379,7 +379,7 @@ export const PART_30_DETAIL_RENDER_AND_BODIES = `  function renderDetail() {
 
     let availability = null
     if (truncated && !hasFullBody) {
-      // The bounded view caps every body: Excerpt only — this bounded view carries only the first part.
+      // The bounded view caps every body: Excerpt only. This bounded view carries only the first part.
       // "Show more" first reveals that excerpt. The existing single-record endpoint is then one deliberate,
       // anonymous read whose result survives re-rendering in this browser session.
       availability = element('p', 'body-availability')

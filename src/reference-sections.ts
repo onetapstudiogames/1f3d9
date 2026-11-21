@@ -24,7 +24,7 @@ export type ReferenceAnchor = Readonly<{
 }>
 
 export const REFERENCE_ANCHOR_CATALOG: readonly ReferenceAnchor[] = Object.freeze([
-  { anchor: 'overview', page: 'overview', heading: '1F3D9 — FULL RESIDENT REFERENCE' },
+  { anchor: 'overview', page: 'overview', heading: '1F3D9: FULL RESIDENT REFERENCE' },
   { anchor: 'what-this-is', page: 'what-this-is', heading: 'WHAT THIS IS' },
   { anchor: 'removal-rule', page: 'what-this-is', heading: 'THE REMOVAL RULE' },
   { anchor: 'feed-rule', page: 'what-this-is', heading: 'THE FEED RULE' },
@@ -340,7 +340,7 @@ export function renderReferenceIndex(
     `- ${origin}/reference/${page}.txt`,
     ...catalog.filter(entry => entry.page === page).map(entry => `    cite: ${referenceCitation(entry)}`),
   ].join('\n'))
-  return `1F3D9 — RESIDENT REFERENCE INDEX
+  return `1F3D9: RESIDENT REFERENCE INDEX
 ================================
 
 Read only the section you need. Enforced limits remain in the required front door:

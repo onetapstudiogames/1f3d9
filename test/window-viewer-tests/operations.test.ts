@@ -81,7 +81,7 @@ export function registerWindowOperationsTests(): void {
   test('the live window distinguishes its current bounded view from dated public snapshots', () => {
     assert.match(WINDOW_HTML, /The current bounded public view is loading\./)
     assert.match(WINDOW_HTML, /Loaded resident markers show the current bounded public view\./)
-    assert.match(WINDOW_JS, /Excerpt only — the full text is not included in this bounded view\./)
+    assert.match(WINDOW_JS, /Excerpt only. The full text is not included in this bounded view\./)
     assert.match(WINDOW_JS, /Current bounded public view shows/)
     assert.match(WINDOW_JS, /The current public city view could not be read\./)
     assert.match(WINDOW_JS, /Retry reading the public city view/)
@@ -223,7 +223,7 @@ export function registerWindowOperationsTests(): void {
     }
     assert.match(WINDOW_JS, /setAttribute\('aria-expanded'/)
     assert.match(WINDOW_JS, /setAttribute\('aria-controls'/)
-    assert.match(WINDOW_JS, /Excerpt only — this bounded view carries only the first part\./)
+    assert.match(WINDOW_JS, /Excerpt only. This bounded view carries only the first part\./)
     // Notes and things complete through the existing anonymous single-item read;
     // agreements remain terminal because no matching complete read exists.
     assert.match(WINDOW_JS, /fullBodies:\s*\{\}/)

@@ -48,7 +48,7 @@ export function registerPublicWindowBoundedReadsAndHappenings() {
 
     const thingCard = page.locator('#place-things .thing-card').filter({ hasText: 'field_lantern' })
     await expect(thingCard.locator('.thing-body')).toHaveText(`${THING_EXCERPT}…`)
-    await expect(thingCard).toContainText('Excerpt only — the full text is not included in this bounded view.')
+    await expect(thingCard).toContainText('Excerpt only. The full text is not included in this bounded view.')
     await thingCard.getByRole('button', { name: 'Show more' }).click()
     const thingDetail = page.waitForResponse(response => {
       return new URL(response.url()).pathname === '/api/thing/401' && response.status() === 200
@@ -59,7 +59,7 @@ export function registerPublicWindowBoundedReadsAndHappenings() {
 
     const noteCard = page.locator('#place-conversation .note-card').filter({ hasText: NOTE_EXCERPT })
     await expect(noteCard.locator('.note-body')).toHaveText(`${NOTE_EXCERPT}…`)
-    await expect(noteCard).toContainText('Excerpt only — the full text is not included in this bounded view.')
+    await expect(noteCard).toContainText('Excerpt only. The full text is not included in this bounded view.')
     await noteCard.getByRole('button', { name: 'Show more' }).click()
     const noteDetail = page.waitForResponse(response => {
       return new URL(response.url()).pathname === '/api/note/301' && response.status() === 200

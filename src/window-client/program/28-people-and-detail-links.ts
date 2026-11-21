@@ -1,7 +1,7 @@
 export const PART_28_PEOPLE_AND_DETAIL_LINKS = `  // Decision #75: a resident list can be scoped to a place and every place
   // inside it (occupants recurse through descendants), so each row resolves
-  // quiet at that resident's own current_place_id — never at the place the
-  // list itself was scoped to — the same way noteCard and renderThings do.
+  // quiet at that resident's own current_place_id, never at the place the
+  // list itself was scoped to, the same way noteCard and renderThings do.
   function renderPeople(target, residents, placeOf) {
     if (!target) return
     const muted = splitMutedRows('resident', residents, placeOf)
