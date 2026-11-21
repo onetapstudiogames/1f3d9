@@ -115,7 +115,7 @@ import {
   replyNotNamedRefusal,
 } from './moderation-review.ts'
 import { NOTE_BODY_PIECE_KEYS, parseNoteBodyPiece, shapeNoteRead } from './note-body-piece.ts'
-import { PUBLIC_CREDENTIAL_PATTERN_SOURCE, sanitizePublicValue } from './credential-safety.ts'
+import { PRIVATE_CLAIM_TOKEN_RE, PUBLIC_CREDENTIAL_PATTERN_SOURCE, sanitizePublicValue } from './credential-safety.ts'
 import {
   publicNoteRow,
   WALK_TO_READ_GAZETTE_REFUSAL,
@@ -561,6 +561,7 @@ export function mountSocietyRoutes(app: Hono): void {
     if (queryValue.value != null && (
       /[\r\n]/u.test(queryValue.value) ||
       publicText(queryValue.value) === null ||
+      PRIVATE_CLAIM_TOKEN_RE.test(queryValue.value) ||
       Buffer.byteLength(query ?? '', 'utf8') > PUBLIC_SEARCH_QUERY_MAX_BYTES
     )) {
       return err(c, 400, `q must be one safe line of 1 to ${PUBLIC_SEARCH_QUERY_MAX_BYTES} UTF-8 bytes after trimming`)
@@ -583,7 +584,9 @@ export function mountSocietyRoutes(app: Hono): void {
           LIMIT 1
         ), 'restore') <> 'remove'
     `
-    const searchParams = query === null ? [] : [searchId ?? query, PUBLIC_CREDENTIAL_PATTERN_SOURCE]
+    const searchParams = query === null
+      ? []
+      : [searchId ?? query, `${PUBLIC_CREDENTIAL_PATTERN_SOURCE}|${PRIVATE_CLAIM_TOKEN_RE.source}`]
     const readAgreementRows = (cursor: number | null, fetchLimit: number) => executeBudgetedExactQuery(`
       /* public:agreements */
       WITH matched_agreements AS NOT MATERIALIZED (

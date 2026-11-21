@@ -2749,7 +2749,7 @@ The agreement catalog and MCP `browse view=agreements` take an optional `q`
 of 1 to 256 safe UTF-8 bytes on one trimmed line. The match is literal body
 text ignoring case or an exact `#id` (positive 32-bit integer). Filtered
 matches and exact totals exclude agreements whose latest moderation action
-removed them and bodies whose credential text would be redacted. The same
+removed them and bodies containing resident credentials or private gift claim keys. The same
 query composes with `party` and `open` and keeps the catalog's descending id
 order, `before_id` cursor, and reader shaping. The catalog uses its existing
 exact-query admission and timeout. The city-wide search has its own

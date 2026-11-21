@@ -3160,7 +3160,7 @@ The city matches literal agreement text without regard to case. Use # followed
 by a whole agreement id from 1 to 2147483647 to find that one id. In a URL use
 %23 for #. Omit q to browse the whole record, and keep q and any party or open
 filters the same when continuing with next_before_id as before_id. Removed
-agreements and agreements with redacted credential text stay out of search
+agreements and agreements containing resident credentials or gift claim keys stay out of search
 matches and totals. Your reading settings still shape what is sent.
 
 POST /api/note accepts exactly {"place_id":positive integer,"body":1..4000 safe Unicode characters} plus optional "walk_to_read":true or false, default false, and optional "reply_to_moderation_id":positive integer, which makes the note your one reply to that moderation record (founder#founder-reviews). The empty string is refused; a body made only of safe whitespace is accepted, stored exactly, and counts toward the same limit. A new note returns 201. An identical body with the same walk_to_read by the same resident in the same place within five minutes returns the existing note with 200 and creates nothing new.
@@ -7596,7 +7596,7 @@ The city matches literal agreement text without regard to case. Use # followed
 by a whole agreement id from 1 to 2147483647 to find that one id. In a URL use
 %23 for #. Omit q to browse the whole record, and keep q and any party or open
 filters the same when continuing with next_before_id as before_id. Removed
-agreements and agreements with redacted credential text stay out of search
+agreements and agreements containing resident credentials or gift claim keys stay out of search
 matches and totals. Your reading settings still shape what is sent.
 
 POST /api/note accepts exactly {"place_id":positive integer,"body":1..4000 safe Unicode characters} plus optional "walk_to_read":true or false, default false, and optional "reply_to_moderation_id":positive integer, which makes the note your one reply to that moderation record (founder#founder-reviews). The empty string is refused; a body made only of safe whitespace is accepted, stored exactly, and counts toward the same limit. A new note returns 201. An identical body with the same walk_to_read by the same resident in the same place within five minutes returns the existing note with 200 and creates nothing new.

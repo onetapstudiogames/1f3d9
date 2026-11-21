@@ -104,6 +104,7 @@ export async function registerLookupAgreementsContextTests(
       'New Cedar Lease note',
       'Cedar lease keeper-only wording',
       `Cedar lease historical fixture 1f3d9_sk_${'dead'.repeat(12)}`,
+      `Cedar lease historical gift fixture gift_claim_${'feed'.repeat(16)}`,
     ]
     const inserted = await postgres.client.query<{ id: number }>(`
       INSERT INTO agreements (created_by_id, body)
@@ -111,13 +112,13 @@ export async function registerLookupAgreementsContextTests(
       ORDER BY position
       RETURNING id
     `, [bodies])
-    const [oldest, near, newest, removed, redacted] = inserted.rows.map(row => row.id) as [
-      number, number, number, number, number,
+    const [oldest, near, newest, removed, redacted, gift] = inserted.rows.map(row => row.id) as [
+      number, number, number, number, number, number,
     ]
     await postgres.client.query(`
       INSERT INTO agreement_parties (agreement_id, resident_id)
       SELECT id, 1 FROM unnest($1::integer[]) AS selected(id)
-    `, [[oldest, newest, removed, redacted]])
+    `, [[oldest, newest, removed, redacted, gift]])
     const moderate = (action: 'remove' | 'restore') => postgres.client.query(`
       INSERT INTO moderation_actions (target_type, target_id, action, actor_id, reason)
       VALUES ('agreement', $1, $2, 1, 'agreement search fixture')
@@ -156,7 +157,9 @@ export async function registerLookupAgreementsContextTests(
     assert.deepEqual((await read(`#${oldest}`)).ids, [oldest])
     assert.deepEqual((await read(`#${oldest}`, { before_id: String(oldest) })).ids, [])
 
-    for (const hidden of ['keeper-only', 'historical fixture', `#${removed}`, `#${redacted}`]) {
+    for (const hidden of [
+      'keeper-only', 'historical fixture', 'historical gift fixture', `#${removed}`, `#${redacted}`, `#${gift}`,
+    ]) {
       const result = await read(hidden)
       assert.deepEqual(result.ids, [])
       assert.equal(result.total_items, 0)

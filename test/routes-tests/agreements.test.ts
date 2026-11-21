@@ -233,8 +233,9 @@ export function registerAgreementsTests(): void {
   test('agreement search refuses invalid terms before reading the catalog', async () => {
     const unsafeLine = 'q must be one safe line of 1 to 256 UTF-8 bytes after trimming'
     const badId = 'q must use an agreement number from 1 to 2147483647 after #'
+    const unsafeQueries = ['', '  ', 'two\nlines', '🏙'.repeat(65), `gift_claim_${'feed'.repeat(16)}`]
     const checks = [
-      ...['', '  ', 'two\nlines', '🏙'.repeat(65)].map(q => [new URLSearchParams({ q }), unsafeLine]),
+      ...unsafeQueries.map(q => [new URLSearchParams({ q }), unsafeLine]),
       ...['#0', '#2147483648'].map(q => [new URLSearchParams({ q }), badId]),
       ['q=one&q=two', 'q must appear at most once'],
     ]
