@@ -93,10 +93,10 @@ export function registerPublicWindowSharingAndPublicRoutes() {
 
     const navigation = await page.goto('/window/gazette?issue=7')
     expect(navigation?.status()).toBe(200)
-    await expect(page).toHaveTitle('The Gazette · Issue 7 could not be checked — 1F3D9')
+    await expect(page).toHaveTitle('The Gazette · Issue 7 could not be checked · 1F3D9')
     await expect(page.locator('meta[property="og:title"]')).toHaveAttribute(
       'content',
-      'The Gazette · Issue 7 could not be checked — 1F3D9',
+      'The Gazette · Issue 7 could not be checked · 1F3D9',
     )
     const unfurlDescription = await page.locator('meta[property="og:description"]')
       .getAttribute('content')

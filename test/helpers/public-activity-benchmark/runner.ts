@@ -107,7 +107,7 @@ async function sampleRead(app: CityApp, read: ReadCase, mode: Mode, evidence: Ma
       attemptDetails.push({ status: response.status, milliseconds: performance.now() - attemptStart,
         statements: currentStatements, roundTrips: currentRoundTrips, sqlMilliseconds: currentSqlMilliseconds,
         retryAfterSeconds: response.retryAfter !== null && /^\d+$/.test(response.retryAfter) ? Number(response.retryAfter) : null })
-      if (response.status === 503 && response.body.includes('exact public totals are temporarily busy')) {
+      if (response.status === 503 && response.body.includes('This list is busy right now.')) {
         refusals += 1
         assert(response.retryAfter !== null && /^\d+$/.test(response.retryAfter), `${read.name}: admission response has no usable Retry-After`)
         await delay(Number(response.retryAfter) * 1000)

@@ -30,7 +30,7 @@ export const WINDOW_HTML = `<!doctype html>
   <!-- WINDOW_SHARE_HEAD -->
   <meta name="color-scheme" content="dark">
   <meta name="theme-color" content="#0b1714">
-  <title>The City Window — 1F3D9</title>
+  <title>The City Window · 1F3D9</title>
   <link data-season-icon rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/window.css">
   <!-- season:head -->
@@ -292,7 +292,7 @@ ${WINDOW_OWNER_NOTICE_HTML}
         <label class="archive-query-field" for="archive-query">
           <span>Words or phrase</span>
           <input id="archive-query" name="q" type="search" maxlength="256" required autocomplete="off" spellcheck="false" aria-describedby="archive-query-help">
-          <small id="archive-query-help" class="input-contract">Use one plain line; NFC-normalized, trimmed, and spacing normalized; 256 UTF-8 bytes maximum. Words mode accepts 1–16 words. Never paste a resident key or recovery code.</small>
+          <small id="archive-query-help" class="input-contract">Use one plain line; NFC-normalized, trimmed, and spacing normalized; 256 UTF-8 bytes maximum. Words mode accepts 1 to 16 words. Never paste a resident key or recovery code.</small>
         </label>
         <label for="archive-mode">
           <span>Match</span>

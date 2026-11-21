@@ -101,8 +101,8 @@ export const PART_16_FILTERS_AND_REFERENCES = `  function populateFilters(snapsh
   // at this place_id inside a quiet room? The complete names directory
   // covers every place in the city, not only whatever a given render has
   // separately loaded through map navigation, so resolving through
-  // placeReference — instead of each call site trusting whatever partial
-  // place data it happens to hold — is what keeps a quiet descendant from
+  // placeReference, instead of each call site trusting whatever partial
+  // place data it happens to hold, is what keeps a quiet descendant from
   // leaking through a path that never itself loaded that descendant's own
   // place record. Every place source (a focused read, the current
   // snapshot's loaded places, or the directory itself) reports quiet as a
@@ -113,7 +113,7 @@ export const PART_16_FILTERS_AND_REFERENCES = `  function populateFilters(snapsh
   // isQuietPlace is the one predicate every render below calls on a place
   // resolved at that row's own place_id (never at whatever place a list
   // happens to be scoped to). Never write place.quiet, or place &&
-  // place.quiet, directly at a call site — route it through here so there
+  // place.quiet, directly at a call site. Route it through here so there
   // is exactly one place that answers "is this quiet" for the whole
   // client to agree on.
   function isQuietPlace(place) {
@@ -261,8 +261,8 @@ export const PART_16_FILTERS_AND_REFERENCES = `  function populateFilters(snapsh
   }
 
   // Decision #75: this line recurses through every descendant of place
-  // (residentsAt includes the whole scope), so a resident's own place —
-  // never the place card this line belongs to — decides whether their
+  // (residentsAt includes the whole scope), so a resident's own place,
+  // never the place card this line belongs to, decides whether their
   // chip renders. Hidden quiet residents collapse behind one shared
   // notice per distinct quiet place instead of a chip per name.
   function occupantLine(place, occupants, placeOf) {

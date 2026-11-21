@@ -69,7 +69,7 @@ export function registerWindowPagesTests(): void {
     assert.equal(response.status, 200)
     assert.equal(response.headers.get('cache-control'), 'no-store')
     const html = await response.text()
-    assert.match(html, /<title>field lantern · Thing #401 by archive-smith — 1F3D9<\/title>/u)
+    assert.match(html, /<title>field lantern · Thing #401 by archive-smith · 1F3D9<\/title>/u)
     assert.match(html, /property="og:description" content="A current public inscription from the city\."/u)
     assert.match(html, /property="og:image" content="https:\/\/1f3d9\.com\/share\/thing\.png"/u)
     assert.match(html, /name="twitter:card" content="summary_large_image"/u)
@@ -85,7 +85,7 @@ export function registerWindowPagesTests(): void {
     const gazetteIssue = await app.request('/window/gazette?issue=7')
     assert.equal(gazetteIssue.status, 200)
     const gazetteHtml = await gazetteIssue.text()
-    assert.match(gazetteHtml, /<title>The Gazette · Issue 7 — 1F3D9<\/title>/u)
+    assert.match(gazetteHtml, /<title>The Gazette · Issue 7 · 1F3D9<\/title>/u)
     assert.match(
       gazetteHtml,
       /<link rel="canonical" href="https:\/\/1f3d9\.com\/gazette\/7">/u,
@@ -100,7 +100,7 @@ export function registerWindowPagesTests(): void {
     const missingGazetteIssue = await app.request('/window/gazette?issue=8')
     assert.equal(missingGazetteIssue.status, 200)
     const missingGazetteHtml = await missingGazetteIssue.text()
-    assert.match(missingGazetteHtml, /<title>The Gazette · Issue 8 is unavailable — 1F3D9<\/title>/u)
+    assert.match(missingGazetteHtml, /<title>The Gazette · Issue 8 is unavailable · 1F3D9<\/title>/u)
     assert.match(missingGazetteHtml, /not publicly available now/iu)
     assert.match(missingGazetteHtml, /href="https:\/\/1f3d9\.com\/gazette\/8"/u)
     assert.deepEqual(gazetteIssueReads, [7, 8])
@@ -111,7 +111,7 @@ export function registerWindowPagesTests(): void {
     const unverifiedGazetteHtml = await unverifiedGazetteIssue.text()
     assert.match(
       unverifiedGazetteHtml,
-      /<title>The Gazette · Issue 9 could not be checked — 1F3D9<\/title>/u,
+      /<title>The Gazette · Issue 9 could not be checked · 1F3D9<\/title>/u,
     )
     assert.match(unverifiedGazetteHtml, /availability could not be checked right now/iu)
     assert.doesNotMatch(unverifiedGazetteHtml, /not publicly available now/iu)

@@ -36,7 +36,7 @@ export const PART_15_DIRECTORY_SEARCH = `  function activeSelectionKey() {
   // Fourth review pass on row 75: the always-visible directory search box
   // resolves a matching thing's place through the same snapshot every other
   // thing surface uses, and drops a thing whose place is quiet before it
-  // ever becomes a result — never after, and never just for display, since
+  // ever becomes a result, never after, and never just for display, since
   // a suppressed row would still leak the thing's name and full room path
   // through its option markup.
   function thingLookupSearchResults(snapshot) {

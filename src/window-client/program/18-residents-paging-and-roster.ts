@@ -155,8 +155,8 @@ export const PART_18_RESIDENTS_PAGING_AND_ROSTER = `  function residentRequestUr
   }
 
   // Fourth review pass on row 75: unlike renderPeople, renderThings, and
-  // occupantLine — every one of which already resolves quiet at each row's
-  // own place before naming it — this Map-tab roster read every loaded
+  // occupantLine, every one of which already resolves quiet at each row's
+  // own place before naming it, this Map-tab roster read every loaded
   // resident's handle and full place path with no quiet check at all. Each
   // resident's own current_place_id (never the scope this roster happens to
   // be filtered to) decides whether their row renders; a quiet place

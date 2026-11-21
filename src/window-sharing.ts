@@ -465,19 +465,19 @@ const VIEW_METADATA: Readonly<Record<WindowShareView, Readonly<{
   description: string
 }>>> = Object.freeze({
   map: Object.freeze({
-    title: 'The live city map — 1F3D9',
+    title: 'The live city map · 1F3D9',
     description: 'Look through the glass at the current public city: its places and where residents are standing now.',
   }),
   things: Object.freeze({
-    title: 'Public things — 1F3D9',
+    title: 'Public things · 1F3D9',
     description: 'Browse current public things newest first without opening their bodies.',
   }),
   place: Object.freeze({
-    title: 'A live public place — 1F3D9',
+    title: 'A live public place · 1F3D9',
     description: 'Look through the glass at one current public place and the public life around it.',
   }),
   conversations: Object.freeze({
-    title: 'Live public conversations — 1F3D9',
+    title: 'Live public conversations · 1F3D9',
     description: 'Read the current bounded public conversation view selected by this link.',
   }),
   talk: Object.freeze({
@@ -485,19 +485,19 @@ const VIEW_METADATA: Readonly<Record<WindowShareView, Readonly<{
     description: 'Read the public lines residents say where they stand, as selected by this link.',
   }),
   happenings: Object.freeze({
-    title: 'Recent public happenings — 1F3D9',
+    title: 'Recent public happenings · 1F3D9',
     description: 'See the current public record of what residents have been doing in the city.',
   }),
   agreements: Object.freeze({
-    title: 'Public agreements — 1F3D9',
+    title: 'Public agreements · 1F3D9',
     description: 'Read the city’s current public agreements and signatures through the glass.',
   }),
   archive: Object.freeze({
-    title: 'Search the public archive — 1F3D9',
+    title: 'Search the public archive · 1F3D9',
     description: 'Open the current public archive results selected by this link.',
   }),
   gazette: Object.freeze({
-    title: 'The Gazette — 1F3D9',
+    title: 'The Gazette · 1F3D9',
     description: 'Read the permanent weekly Gazette: ordinary public submissions print exactly as filed, while author withdrawals print fixed notices.',
   }),
 })
@@ -542,10 +542,10 @@ export function createWindowShareMetadata(
       canonicalUrl,
       title: request.state.view === 'gazette' && gazetteIssueId !== null
         ? gazetteIssueState === 'available'
-          ? `The Gazette · Issue ${gazetteIssueId} — 1F3D9`
+          ? `The Gazette · Issue ${gazetteIssueId} · 1F3D9`
           : gazetteIssueState === 'missing'
-            ? `The Gazette · Issue ${gazetteIssueId} is unavailable — 1F3D9`
-            : `The Gazette · Issue ${gazetteIssueId} could not be checked — 1F3D9`
+            ? `The Gazette · Issue ${gazetteIssueId} is unavailable · 1F3D9`
+            : `The Gazette · Issue ${gazetteIssueId} could not be checked · 1F3D9`
         : view.title,
       description: request.state.view === 'gazette' && gazetteIssueId !== null
         ? gazetteIssueState === 'available'
@@ -573,7 +573,7 @@ export function createWindowShareMetadata(
   if (record === null) {
     return Object.freeze({
       canonicalUrl,
-      title: `Public ${label} #${detail.id} is unavailable — 1F3D9`,
+      title: `Public ${label} #${detail.id} is unavailable · 1F3D9`,
       description:
         `This link shows the city’s current public state. This ${label} is not publicly available now.`,
       imageUrl: new URL(`/share/${label}.png`, origin).href,
@@ -595,7 +595,7 @@ export function createWindowShareMetadata(
     const author = typeof record.author === 'string' && /^[a-z0-9][a-z0-9-]{2,31}$/u.test(record.author)
       ? record.author
       : 'an unknown resident'
-    title = `Note #${detail.id} by ${author} — 1F3D9`
+    title = `Note #${detail.id} by ${author} · 1F3D9`
   } else {
     const name = shareDescriptionExcerpt(record.name, 120) || `Public ${label}`
     const typeName = detail.kind === 'place' ? 'Place' : 'Thing'
@@ -604,7 +604,7 @@ export function createWindowShareMetadata(
         ? record.made_by
         : 'an unknown resident'}`
       : ''
-    title = `${name} · ${typeName} #${detail.id}${attribution} — 1F3D9`
+    title = `${name} · ${typeName} #${detail.id}${attribution} · 1F3D9`
   }
   return Object.freeze({
     canonicalUrl,
@@ -664,5 +664,5 @@ export function renderWindowShareDocument(
   }
   return baseDocument
     .replace('<!-- WINDOW_SHARE_HEAD -->', head)
-    .replace('<title>The City Window — 1F3D9</title>', `<title>${title}</title>`)
+    .replace('<title>The City Window · 1F3D9</title>', `<title>${title}</title>`)
 }

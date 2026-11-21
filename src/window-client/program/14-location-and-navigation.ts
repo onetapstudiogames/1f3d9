@@ -102,7 +102,7 @@ export const PART_14_LOCATION_AND_NAVIGATION = `  function readLocationState() {
     return true
   }
 
-  // Deliberate navigation — tabs, choosing a place or resident, filters —
+  // Deliberate navigation (tabs, choosing a place or resident, filters)
   // creates a real back/forward entry. Background refresh never touches
   // history because renderAll only replaces when the hash is unchanged.
   // Arrow-key roving between tabs updates the address without pushing, so
