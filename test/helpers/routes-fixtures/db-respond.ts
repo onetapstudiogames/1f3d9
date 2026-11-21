@@ -12,6 +12,11 @@ import { respondToDatabaseStage8 } from './db-respond-8.ts'
 export function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] {
 
   const q = query.replace(/\s+/g, ' ').trim().toLowerCase()
+  // The kept events count (decision #196) is never usable in these fixtures, so every
+  // events read goes on to the full count the responders below answer.
+  if (q.includes('/* public:events-kept */')) {
+    return [{ id: null, total_items: '0', total_text_bytes: '0', left_out_feed_rooms: '0', left_out_feed_room_ids: null, kept_state_rows: 0 }]
+  }
   if (q.includes("to_regprocedure('public.public_activity_invalidation_scope")) return [{ installed: false }]
   if (q.includes('/* public activity acquire */') || q.includes('/* public activity validate */')) {
     return [{ resident_ids: [Number(params[0])], place_ids: [] }]

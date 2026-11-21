@@ -1,8 +1,11 @@
-// Guards for the kept events tally (decision #196). The tally runs in the background
-// only: no read path uses it yet, the feed rule keeps one home, a change to that rule
-// forces a new tally rule version, and a migration that could rewrite event history
-// must reset the tally. The tally's real-PostgreSQL behaviour is in
-// test/integration/events-totals-tally-postgres.test.ts.
+// Guards for the kept events tally (decision #196). Exactly one read path uses it: the
+// events list's totals, through src/events-totals-read.ts, while the count may be
+// trusted. Today's statements stay the fallback byte for byte, the hourly check's
+// statement cannot drift, the feed rule keeps one home, a change to that rule forces a
+// new tally rule version, and a migration that could rewrite event history must reset
+// the tally. The real-PostgreSQL behaviour is in
+// test/integration/events-totals-tally-postgres.test.ts and
+// test/integration/events-totals-read-postgres.test.ts.
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { readFileSync, readdirSync } from 'node:fs'
@@ -13,7 +16,7 @@ import {
   loadPublicEventPageRows,
   PUBLIC_EVENT_TOTALS_COLUMNS_SQL,
 } from '../src/public-pagination.ts'
-import { EVENTS_TOTALS_RULE_VERSION, eventTallyKeysSql } from '../src/events-totals-tally.ts'
+import { EVENTS_TALLY_TOTALS_SQL, EVENTS_TOTALS_RULE_VERSION, eventTallyKeysSql } from '../src/events-totals-tally.ts'
 import { EVENTS_TOTALS_SWITCH, eventsTotalsTallyOn } from '../src/events-totals-maintenance.ts'
 
 const root = new URL('../', import.meta.url)
@@ -42,8 +45,9 @@ test('a change to the feed rule or the tally grouping needs a new tally rule ver
 })
 
 // The events list's statements and the feed-room join every city-wide list uses, as
-// main served them at ae3e3d5 before the tally existed (decision #196 adds the tally
-// in the background only). A change here is a read change and needs its own review.
+// main served them at ae3e3d5 before the tally existed. They stay the fallback for every
+// read the kept count does not answer, so a change here is a read change and needs its
+// own review.
 const READS_AT_MAIN = Object.freeze({
   lateral_events_place: '6f2038cbe3482755cf088016b79396b1d4040b1c91577f9a2534229c2fb452a6',
   lateral_changes: '3bcf32c95dbda2bb86b721798b2b608518103680c0aace1b715bb296804e407f',
@@ -84,20 +88,36 @@ function sourceFiles(directory: string): readonly string[] {
   })
 }
 
-test('no read path, route, tool or page reads the tally: only the maintenance step reaches it', () => {
+// The hourly check compares exactly this statement with the full count, and the reader
+// gates the same body; a change to it is a change to what the check proves.
+const KEPT_TOTALS_SQL_HASH = 'dd0b0dd7cdc394fdec665ccfe3bf2b4fe9012a34354204704f50fc01efc9c216'
+
+test("the hourly check's kept statement is the one the live checks proved since 2026-11-12", () => {
+  assert.equal(sha(EVENTS_TALLY_TOTALS_SQL), KEPT_TOTALS_SQL_HASH)
+})
+
+test("one read path reads the tally: the events list's totals, through src/events-totals-read.ts", () => {
   const files = sourceFiles('src')
   assert.ok(files.length > 100)
   const namingTables = files.filter(path => /events_totals_(?:tally|state)/u.test(read(path)))
   assert.deepEqual(new Set(namingTables), TALLY_FILES, 'only the tally modules name its tables')
   const importing = (module: string) => files.filter(path => read(path).includes(`from './${module}'`)).sort()
-  assert.deepEqual(importing('events-totals-tally.ts'), ['src/events-totals-check.ts', 'src/events-totals-maintenance.ts'])
+  assert.deepEqual(importing('events-totals-tally.ts'),
+    ['src/events-totals-check.ts', 'src/events-totals-maintenance.ts', 'src/events-totals-read.ts'])
   assert.deepEqual(importing('events-totals-check.ts'), ['src/events-totals-maintenance.ts'])
-  assert.deepEqual(importing('events-totals-maintenance.ts'), ['src/index.ts'])
+  assert.deepEqual(importing('events-totals-maintenance.ts'), ['src/events-totals-read.ts', 'src/index.ts'])
+  assert.deepEqual(importing('events-totals-read.ts'), ['src/index.ts'])
+  assert.doesNotMatch(read('src/public-pagination.ts'), /from '\.\/events-totals/u, 'the list loader never imports the tally')
   const index = read('src/index.ts')
   const uses = index.split('\n').filter(line => /runEventsTotalsMaintenance|reportEventsTotalsFailure/u.test(line))
   assert.equal(uses.length, 2, 'the import and the one maintenance step')
   assert.match(uses[1]!, /^\s+\{ run: \(\) => runEventsTotalsMaintenance\(runtimeDatabase, process\.env\), report: reportEventsTotalsFailure \},$/u)
   assert.match(index, /runMaintenance: async \(\) => await runEachRetention\(\[[^\]]*runMcpCallLogRetention[^\]]*runEventsTotalsMaintenance[^\]]*\]\)/u)
+  const reads = index.split('\n').filter(line => /loadEventsListCollection|loadPublicEventCollectionRows/u.test(line))
+  assert.equal(reads.length, 2, 'the import and the one call')
+  assert.match(reads[1]!, /^\s+const collection = await loadEventsListCollection\(executeBudgetedExactQuery, eventFilters, parsed, process\.env\)$/u)
+  const route = index.slice(index.indexOf("app.get('/api/events',"), index.indexOf("app.post('/api/flag',"))
+  assert.ok(route.includes('loadEventsListCollection('), 'the one call is in GET /api/events')
 })
 
 test('the step rides the existing five-minute maintenance cron; no timed job is added', () => {

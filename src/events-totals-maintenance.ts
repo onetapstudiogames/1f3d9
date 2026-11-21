@@ -5,8 +5,9 @@ import { runHourlyEventsTotalsCheck, type EventsTotalsObservation } from './even
 // The kept events tally's step on the five-minute maintenance cron (decision #196):
 // fold newly settled events, run the cheap check, and once an hour the full check.
 // It runs beside the two log purges of decision #141 and never answers a caller.
-// EVENTS_TOTALS_TALLY=off stops the step at the next deploy; the operator's
-// events_totals_state.paused stops it at once without a deploy.
+// EVENTS_TOTALS_TALLY=off stops the step at the next deploy and turns the events list's
+// reads back to the full count (src/events-totals-read.ts); the operator's
+// events_totals_state.paused stops both at once without a deploy.
 
 export const EVENTS_TOTALS_SWITCH = 'EVENTS_TOTALS_TALLY'
 

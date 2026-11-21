@@ -2484,11 +2484,21 @@ busy or timed-out aggregate returns 503 with `Retry-After: 1`; it never returns 
 partial, estimated, or unfiltered totals. This avoids loading every body into the application and prevents a
 room read or writer meter from rescanning every stored room body.
 
-The events list keeps a settled tally of its history in the background (decision #196),
-so that a later reviewed change can count old history once instead of on every read.
-Today nothing answers a caller from it: `GET /api/events`, MCP `browse view=events`,
-the window and every other read count exactly as before, and no read statement names the
-tally. `events_totals_tally` holds, for each event kind, the count and counted text bytes
+The events list keeps a settled tally of its history (decision #196), so that its
+totals count old history once instead of on every read. `GET /api/events` reads with no
+filter or one `kind`, on any page (`before_id`, `after_id`, both, any `limit`,
+`hidden`, a marker read), take their totals from the tally plus a full count of only the
+events after its kept marker, in the same statement and snapshot as the page, and only
+while the state row is trusted, not paused, not held off, caught up and on the code's rule
+version. Otherwise, and for every read with `actor`, `place_id`, `within_place_id` or
+`within_seconds`, the totals are counted over the whole list exactly as before; a kept
+total that comes out below zero is counted that way too. The answer's shape and numbers do
+not depend on which way it was counted. Both statements run through the same two exact-read
+slots and 1.5-second limit, and a busy kept read answers busy rather than trying the
+heavier count. MCP `browse view=events` and the window's events history call this route,
+so they show the same numbers; the window's outline and snapshot event counts,
+`/api/changes` and its tools, the front door and search totals keep their own counts and
+never read the tally. `events_totals_tally` holds, for each event kind, the count and counted text bytes
 of every event at or below the kept change marker, and a second row for the room, thing or
 set of rooms through which a feed room could keep a note, line, thing, ping or applied
 activity out; `events_totals_state` holds that marker, the rule version, and the checks'
@@ -2503,7 +2513,8 @@ checks that the per-kind counts add up to the change rows the tally covers; once
 hour, after the first fill has caught up, one read-only snapshot compares the totals the
 tally gives with the list's own full count, for the whole list and every kind, and checks
 that every event has its change row. The step and the check run with JIT compilation off,
-because the planner cannot see how few events lie past the kept marker. A mismatch prints `events_totals_mismatch` with the
+because the planner cannot see how few events lie past the kept marker; the reader sets
+nothing about JIT, because the live database has none (`pg_jit_available()` false). A mismatch prints `events_totals_mismatch` with the
 kind and the public numbers, marks the tally not to be trusted, and rebuilds it; a kept
 total below zero is a mismatch like any other. A second mismatch within 24 hours sets
 `held_off` until the operator clears it. A check that fails after claiming its hour prints
@@ -2511,7 +2522,8 @@ total below zero is a mismatch like any other. A second mismatch within 24 hours
 the next check matches. The tally's grouping is built
 from the feed rule's own pieces in `src/feed-rooms.ts`, and a change to either needs a new
 `EVENTS_TOTALS_RULE_VERSION`, which rebuilds it. `events_totals_state.paused` stops the
-step at once; `EVENTS_TOTALS_TALLY=off` stops it at the next deploy.
+step and the reads' use of it at once; `EVENTS_TOTALS_TALLY=off` stops both at the next
+deploy, and reads count the whole list again.
 
 Successful note creation, thing creation, and thing editing return a neutral
 `reading_cost` meter. `new_item_text_bytes` measures the new body;

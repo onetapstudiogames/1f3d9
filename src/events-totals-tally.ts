@@ -13,8 +13,9 @@ import { PUBLIC_EVENT_TEXT_BYTES_SQL, PUBLIC_EVENT_TOTALS_COLUMNS_SQL } from './
 // marker kept in events_totals_state, are counted once into events_totals_tally,
 // grouped by what decides whether a feed room keeps them out today. The five-minute
 // maintenance cron folds newly settled events in (this file) and checks the tally
-// each hour against a full recount (src/events-totals-check.ts). Nothing answers a
-// caller from it yet: GET /api/events still counts the whole list itself.
+// each hour against a full recount (src/events-totals-check.ts). While the state row
+// says the count may be trusted, the events list's unfiltered and kind-only totals come
+// from it (src/events-totals-read.ts); every other read counts the whole list itself.
 
 /**
  * Bump on any change to the grouping below or to the feed rule it mirrors
@@ -335,12 +336,15 @@ const TALLY_FEED_IDS = feedRoomIdsSql()
  * The events list's totals for no filter or one kind ($1), worked out from the tally
  * plus a full count of only the events above its kept marker, in one statement. The
  * columns match the list's own totals: total_items, total_text_bytes,
- * left_out_feed_rooms and every left-out room id (not cut to 10). The hourly check
- * compares this with the full count; no caller is answered from it yet.
+ * left_out_feed_rooms and every left-out room id (not cut to 10), plus state_rows, the
+ * number of state rows the statement used. `stateGate` narrows which state row it may
+ * use; with no row, the fresh part reads nothing and state_rows is 0. `freshChanges`
+ * is the join to the change rows above the kept marker.
  */
-export const EVENTS_TALLY_TOTALS_SQL = `/* events-totals:kept */
+function eventsTallyTotalsSql(stateGate: string, freshChanges: string): string {
+  return `
   WITH tally_state AS MATERIALIZED (
-    SELECT kept_change_id FROM events_totals_state WHERE singleton
+    SELECT kept_change_id FROM events_totals_state WHERE singleton${stateGate}
   ), tally_feed AS MATERIALIZED (
     SELECT ${TALLY_FEED_IDS} AS ids
   ), kept_all AS (
@@ -368,7 +372,7 @@ export const EVENTS_TALLY_TOTALS_SQL = `/* events-totals:kept */
   ), fresh AS (
     SELECT ${PUBLIC_EVENT_TOTALS_COLUMNS_SQL}
     FROM tally_state
-    JOIN public_change_log change ON change.change_id > tally_state.kept_change_id
+    ${freshChanges}
     JOIN events event ON event.id = change.event_id
     ${feedRoomEventLateralSql('event', TALLY_FEED_IDS)}
     WHERE ($1::text IS NULL OR event.kind = $1::text)
@@ -386,3 +390,28 @@ export const EVENTS_TALLY_TOTALS_SQL = `/* events-totals:kept */
     ) room) AS left_out_feed_room_ids,
     (SELECT count(*) FROM tally_state)::integer AS state_rows
   FROM kept_all CROSS JOIN left_out CROSS JOIN fresh`
+}
+
+/** The hourly check's statement: the kept totals from the state row as it stands. */
+export const EVENTS_TALLY_TOTALS_SQL = `/* events-totals:kept */${eventsTallyTotalsSql('',
+  'JOIN public_change_log change ON change.change_id > tally_state.kept_change_id')}`
+
+/**
+ * The same totals for a caller, read only while the count may be trusted: checked and
+ * trusted, not paused, not held off, caught up and built under this code's rule version.
+ * Otherwise state_rows is 0 and the caller counts today's way. It is the totals part of
+ * the events list's own statement (src/public-pagination.ts), so the gate, the totals and
+ * the page share one snapshot.
+ *
+ * The change rows above the kept marker are also bounded by the settled marker read in
+ * the same snapshot, which every visible change row is at or below (#130), so the range
+ * holds the same rows. Bounded on both ends by values read in the statement, the planner
+ * expects a narrow range and walks it by change id; with the lower end alone it expects a
+ * third of the log, and from about 900,000 events walked every change row (about 340 ms
+ * against 4 ms, measured locally).
+ */
+export const EVENTS_TALLY_READER_TOTALS_SQL = eventsTallyTotalsSql(` AND trusted AND NOT paused AND NOT held_off
+      AND caught_up_at IS NOT NULL AND rule_version = ${EVENTS_TOTALS_RULE_VERSION}`,
+`JOIN public_change_log change ON change.change_id > (SELECT kept_change_id FROM tally_state)
+      AND change.change_id <= (SELECT current_change_id FROM public_change_state WHERE singleton)`)
+
