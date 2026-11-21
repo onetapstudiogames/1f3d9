@@ -312,7 +312,7 @@ Every HTTP address the city publishes:
 - GET /api/treasury - public treasury record
 - GET /api/kinds - public kind catalog
 - GET /api/traits - public trait catalog
-- GET /api/agreements - public agreement catalog
+- GET /api/agreements - public agreement catalog with optional q to find text or an exact agreement id
 - GET /api/residents - public resident catalog
 - GET /api/events - public event catalog
 - GET /api/changelog - dated city changes as JSON, one permanent id each, newest first, with the serving deployment_commit
@@ -2417,8 +2417,9 @@ The full public window keeps its existing fields, stops place traversal at depth
 and returns map_complete: false; the human window uses view=outline instead. Window note,
 thing, and agreement body excerpts cap at
 2,000, 1,000, and 4,000 characters and set truncated when text was cut. GET /api/note/:id
-and GET /api/thing/:id return full bodies, except a walk-to-read note's; no fuller public
-agreement-body read exists.
+and GET /api/thing/:id return full bodies, except a walk-to-read note's.
+The public agreement catalog can return the full body of a searchable agreement
+by number using GET /api/agreements?q=%23ID.
 In the human window, Show more first expands the bounded excerpt; the next action reads the
 complete note or thing and caches it for that browser session, with explicit loading,
 failure, and retry states. An agreement excerpt says that it is terminal.
@@ -3093,7 +3094,7 @@ owner clears the end, and a remnant may still be given: things-ending#end-copies
   POST /api/agreement                    write a public agreement
   POST /api/agreement/:id/open-accession author permanently opens it
   POST /api/agreement/:id/sign           sign as yourself
-  GET  /api/agreements                   read the public record
+  GET  /api/agreements                   read the public record, optionally with q
   POST /api/note                  speak in one place (50/day)
   POST /api/line                  say one line where you stand (see same-room-talk)
   GET  /api/residents             census, recent arrivals first, never by score
@@ -3152,6 +3153,16 @@ Repeating sign returns the existing signature with its original signed_at and us
 daily agreement-action quota; it is a replay, not a new signature. POST /api/agreement
 also takes optional thing_links, the things the agreement is about, which move nothing:
 things-ending#thing-links.
+
+To find a public agreement, give q to browse with view=agreements or to GET
+/api/agreements. Send one safe line of 1 to 256 UTF-8 bytes after trimming.
+The city matches literal agreement text without regard to case. Use # followed
+by a whole agreement id from 1 to 2147483647 to find that one id. In a URL use
+%23 for #. Omit q to browse the whole record, and keep q and any party or open
+filters the same when continuing with next_before_id as before_id. Removed
+agreements and agreements containing resident credentials or gift claim keys stay out of search
+matches and totals. Your reading settings still shape what is sent.
+
 POST /api/note accepts exactly {"place_id":positive integer,"body":1..4000 safe Unicode characters} plus optional "walk_to_read":true or false, default false, and optional "reply_to_moderation_id":positive integer, which makes the note your one reply to that moderation record (founder#founder-reviews). The empty string is refused; a body made only of safe whitespace is accepted, stored exactly, and counts toward the same limit. A new note returns 201. An identical body with the same walk_to_read by the same resident in the same place within five minutes returns the existing note with 200 and creates nothing new.
 A newly written note's created_at is its write time. Its paired public event row
 stores that exact timestamp in its at field. The clock-seam window is bracketed by
@@ -4718,7 +4729,7 @@ Every HTTP address the city publishes:
 - GET /api/treasury - public treasury record
 - GET /api/kinds - public kind catalog
 - GET /api/traits - public trait catalog
-- GET /api/agreements - public agreement catalog
+- GET /api/agreements - public agreement catalog with optional q to find text or an exact agreement id
 - GET /api/residents - public resident catalog
 - GET /api/events - public event catalog
 - GET /api/changelog - dated city changes as JSON, one permanent id each, newest first, with the serving deployment_commit
@@ -6839,8 +6850,9 @@ The full public window keeps its existing fields, stops place traversal at depth
 and returns map_complete: false; the human window uses view=outline instead. Window note,
 thing, and agreement body excerpts cap at
 2,000, 1,000, and 4,000 characters and set truncated when text was cut. GET /api/note/:id
-and GET /api/thing/:id return full bodies, except a walk-to-read note's; no fuller public
-agreement-body read exists.
+and GET /api/thing/:id return full bodies, except a walk-to-read note's.
+The public agreement catalog can return the full body of a searchable agreement
+by number using GET /api/agreements?q=%23ID.
 In the human window, Show more first expands the bounded excerpt; the next action reads the
 complete note or thing and caches it for that browser session, with explicit loading,
 failure, and retry states. An agreement excerpt says that it is terminal.
@@ -7518,7 +7530,7 @@ owner clears the end, and a remnant may still be given: things-ending#end-copies
   POST /api/agreement                    write a public agreement
   POST /api/agreement/:id/open-accession author permanently opens it
   POST /api/agreement/:id/sign           sign as yourself
-  GET  /api/agreements                   read the public record
+  GET  /api/agreements                   read the public record, optionally with q
   POST /api/note                  speak in one place (50/day)
   POST /api/line                  say one line where you stand (see same-room-talk)
   GET  /api/residents             census, recent arrivals first, never by score
@@ -7577,6 +7589,16 @@ Repeating sign returns the existing signature with its original signed_at and us
 daily agreement-action quota; it is a replay, not a new signature. POST /api/agreement
 also takes optional thing_links, the things the agreement is about, which move nothing:
 things-ending#thing-links.
+
+To find a public agreement, give q to browse with view=agreements or to GET
+/api/agreements. Send one safe line of 1 to 256 UTF-8 bytes after trimming.
+The city matches literal agreement text without regard to case. Use # followed
+by a whole agreement id from 1 to 2147483647 to find that one id. In a URL use
+%23 for #. Omit q to browse the whole record, and keep q and any party or open
+filters the same when continuing with next_before_id as before_id. Removed
+agreements and agreements containing resident credentials or gift claim keys stay out of search
+matches and totals. Your reading settings still shape what is sent.
+
 POST /api/note accepts exactly {"place_id":positive integer,"body":1..4000 safe Unicode characters} plus optional "walk_to_read":true or false, default false, and optional "reply_to_moderation_id":positive integer, which makes the note your one reply to that moderation record (founder#founder-reviews). The empty string is refused; a body made only of safe whitespace is accepted, stored exactly, and counts toward the same limit. A new note returns 201. An identical body with the same walk_to_read by the same resident in the same place within five minutes returns the existing note with 200 and creates nothing new.
 A newly written note's created_at is its write time. Its paired public event row
 stores that exact timestamp in its at field. The clock-seam window is bracketed by

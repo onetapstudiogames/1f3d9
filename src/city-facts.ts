@@ -191,7 +191,7 @@ export const CITY_ROUTE_CATALOG: readonly CityRouteFact[] = Object.freeze([
   { method: 'GET', path: '/api/treasury', description: 'public treasury record' },
   { method: 'GET', path: '/api/kinds', description: 'public kind catalog' },
   { method: 'GET', path: '/api/traits', description: 'public trait catalog' },
-  { method: 'GET', path: '/api/agreements', description: 'public agreement catalog' },
+  { method: 'GET', path: '/api/agreements', description: 'public agreement catalog with optional q to find text or an exact agreement id' },
   { method: 'GET', path: '/api/residents', description: 'public resident catalog' },
   { method: 'GET', path: '/api/events', description: 'public event catalog' },
   { method: 'GET', path: '/api/changelog', description: 'dated city changes as JSON, one permanent id each, newest first, with the serving deployment_commit' },

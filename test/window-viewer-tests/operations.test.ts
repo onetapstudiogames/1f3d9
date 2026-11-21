@@ -224,8 +224,8 @@ export function registerWindowOperationsTests(): void {
     assert.match(WINDOW_JS, /setAttribute\('aria-expanded'/)
     assert.match(WINDOW_JS, /setAttribute\('aria-controls'/)
     assert.match(WINDOW_JS, /Excerpt only — this bounded view carries only the first part\./)
-    // Notes and things complete through the existing anonymous single-item read;
-    // agreements remain terminal because no matching complete read exists.
+    // The window completes notes and things through their individual routes.
+    // The agreement catalog is a separate read outside the window.
     assert.match(WINDOW_JS, /fullBodies:\s*\{\}/)
     assert.match(WINDOW_JS, /function bodyDisclosureLabel\(/)
     assert.match(WINDOW_JS, /async function loadFullBody\(/)
