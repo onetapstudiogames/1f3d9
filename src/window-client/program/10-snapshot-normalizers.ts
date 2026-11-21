@@ -97,6 +97,8 @@ export const PART_10_SNAPSHOT_NORMALIZERS = `  let publicActivityRevision = 0
         notes: safeCount(rawPlace.notes),
         moderated,
         quiet: rawPlace.quiet === true,
+        // Only a read that says false proves the place thumbnail would answer 404.
+        has_drawing: !moderated && rawPlace.has_drawing !== false,
         ...(includeHinge ? { hinge: normalizeHinge(rawPlace.hinge) } : {}),
         children: normalizePlaces(rawPlace.children, depth + 1, nextSeen, includeHinge),
       }]

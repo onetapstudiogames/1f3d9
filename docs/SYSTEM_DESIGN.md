@@ -826,7 +826,10 @@ existing JSON readback.
 
 Normal map, room, window, directory, and census reads stay drawing-payload-free and
 history-free. Portraits are separate lazy image requests for visible named rows; no list
-row gains a drawing or revision field. The standalone live page may use the same thumbnail
+row gains a drawing or revision field. Map-outline place rows, which the window outline
+reuses, carry only a `has_drawing` boolean (false when the place is undrawn or
+moderation-hidden), like resident and thing rows, so the window asks for a place
+thumbnail only when one exists. The standalone live page may use the same thumbnail
 route. Drawing details keep the exact JSON readback, and only `Show drawing history`
 starts history. Dated public snapshots deliberately
 export the current presentations and immutable drawing revisions.

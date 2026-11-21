@@ -203,7 +203,9 @@ export const PART_15_DIRECTORY_SEARCH = `  function activeSelectionKey() {
           result.kind,
           result.id,
           result.label,
-          result.kind === 'place' || result.hasDrawing === true,
+          result.kind === 'place'
+            ? placeReference(snapshot, result.id)?.has_drawing !== false
+            : result.hasDrawing === true,
         ), copy)
         option.addEventListener('mousedown', event => event.preventDefault())
         option.addEventListener('mouseenter', () => {
