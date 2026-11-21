@@ -198,7 +198,7 @@ export function registerPublicRecordsTests(): void {
     assert.equal(thing.headers.get('cache-control'), 'no-store')
     const html = await thing.text()
     assert.match(html, /<link rel="canonical" href="https:\/\/1f3d9\.com\/window\/thing\/41">/u)
-    assert.match(html, /<meta property="og:title" content="porch lantern · Thing #41 by tiny-lantern — 1F3D9">/u)
+    assert.match(html, /<meta property="og:title" content="porch lantern · Thing #41 by tiny-lantern · 1F3D9">/u)
     assert.match(html, /<meta property="og:description" content="warm light">/u)
     assert.doesNotMatch(html, /1f3d9_(?:sk|at|rt|ac|rc)_/iu)
 
@@ -210,7 +210,7 @@ export function registerPublicRecordsTests(): void {
     reset({ scenario: 'public details' })
     const view = await app.request('/window/happenings')
     assert.equal(view.status, 200)
-    assert.match(await view.text(), /Recent public happenings — 1F3D9/u)
+    assert.match(await view.text(), /Recent public happenings · 1F3D9/u)
     assert.equal(sqlCalls().length, 0, 'a body-free view must not read a detail record')
 
     const image = await app.request('/share/thing.png')

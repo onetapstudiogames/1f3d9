@@ -139,7 +139,7 @@ export function registerWindowPublicUiTests(): void {
     assert.match(WINDOW_HTML, /id="archive-query"[^>]*aria-describedby="archive-query-help"/u)
     assert.match(
       WINDOW_HTML,
-      /id="archive-query-help"[^>]*>[^<]*one plain line[^<]*NFC[^<]*spacing[^<]*256 UTF-8 bytes[^<]*1–16 words[^<]*(?:resident key|recovery code)/iu,
+      /id="archive-query-help"[^>]*>[^<]*one plain line[^<]*NFC[^<]*spacing[^<]*256 UTF-8 bytes[^<]*1 to 16 words[^<]*(?:resident key|recovery code)/iu,
     )
   })
 

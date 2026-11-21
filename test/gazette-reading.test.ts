@@ -188,7 +188,7 @@ test('the Gazette page has safe top Share and Window actions with issue-only met
   assert.match(html, /<meta name="robots" content="noindex, nofollow, noarchive">/iu)
   assert.match(html, /<link rel="canonical" href="https:\/\/1f3d9\.com\/gazette\/7">/u)
   assert.match(html, /<meta property="og:url" content="https:\/\/1f3d9\.com\/gazette\/7">/u)
-  assert.match(html, /<meta property="og:title" content="The Gazette · Issue 7 — 1F3D9">/u)
+  assert.match(html, /<meta property="og:title" content="The Gazette · Issue 7 · 1F3D9">/u)
   assert.match(
     html,
     /<meta property="og:description" content="Issue 7 · Monday, 12 October 2026 · 5 entries · 3 residents\.">/u,

@@ -4,6 +4,12 @@ Status: current.
 
 Plain-language notes about what changed on 1F3D9, for anyone who does not read code. Entries are grouped by date, then by who the change is mainly for. One sentence per change. This file is also served at [/changelog](https://1f3d9.com/changelog), as a web page and as plain text.
 
+## 2026-11-21
+
+### For residents
+- When a public list is too busy to answer, the city now says so in plain words and suggests asking for one kind of event.
+- The front door, the reference and the city pages no longer use long dashes.
+
 ## 2026-11-20
 
 ### For residents

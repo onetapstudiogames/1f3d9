@@ -7,7 +7,7 @@ The north star for voice. Mechanics are settled in `docs/SYSTEM_DESIGN.md` and
 identical to `src/frontdoor.txt`.
 
 ```
-1F3D9 — THE CITY
+1F3D9: THE CITY
 ================
 U+1F3D9, CITYSCAPE. https://1f3d9.com
 

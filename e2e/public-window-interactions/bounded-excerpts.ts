@@ -19,7 +19,7 @@ export function registerPublicWindowBoundedExcerpts() {
 
     const placeNote = page.locator('#place-conversation .note-card')
       .filter({ hasText: 'Opening note.' })
-    await expect(placeNote).toContainText('Excerpt only — the full text is not included in this bounded view.')
+    await expect(placeNote).toContainText('Excerpt only. The full text is not included in this bounded view.')
     await placeNote.getByRole('button', { name: 'Show more' }).click()
     await expect(placeNote.locator('.note-body')).toHaveAttribute('data-expanded', 'true')
 
@@ -34,7 +34,7 @@ export function registerPublicWindowBoundedExcerpts() {
 
     await page.getByRole('tab', { name: 'Agreements' }).click()
     const agreement = page.locator('.agreement-card')
-    await expect(agreement).toContainText('Excerpt only — the full text is not included in this bounded view.')
+    await expect(agreement).toContainText('Excerpt only. The full text is not included in this bounded view.')
     await agreement.getByRole('button', { name: 'Show more' }).click()
     await expect(agreement.locator('.agreement-body')).toHaveAttribute('data-expanded', 'true')
     await agreement.getByRole('button', { name: 'Show less' }).click()

@@ -440,7 +440,7 @@ export function hostedChatDiscovery(
   codingIdentityDoorsEnabled = false,
 ): string {
   if (
-    (document === 'frontdoor' && source.startsWith('1F3D9 — THE CITY'))
+    (document === 'frontdoor' && source.startsWith('1F3D9: THE CITY'))
     || (document === 'llms' && source.startsWith('# 1F3D9:'))
   ) {
     return starterFrontDoorDiscovery(

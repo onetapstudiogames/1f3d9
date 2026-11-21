@@ -183,7 +183,7 @@ export const PART_32_CONVERSATIONS_AND_HAPPENINGS = `  function renderConversati
           : event.detail.status)
       }
       if (event.detail.status === 'blocked' || event.detail.status === 'failed') {
-        description += ' — ' + eventCause(event.detail)
+        description += ': ' + eventCause(event.detail)
       }
     } else if (event.kind === 'thing_moved' && event.detail.mode === 'carry' &&
         event.detail.thing_id) {
@@ -200,7 +200,7 @@ export const PART_32_CONVERSATIONS_AND_HAPPENINGS = `  function renderConversati
     } else if (event.kind === 'effect_resolved' && event.detail.status) {
       description += ' · ' + event.detail.status
       if (event.detail.status === 'skipped' || event.detail.status === 'failed') {
-        description += ' — ' + eventCause(event.detail)
+        description += ': ' + eventCause(event.detail)
       }
     } else if (event.kind === 'gazette_printed') {
       const submissions = event.detail.entry_count === 1 ? 'submission' : 'submissions'
