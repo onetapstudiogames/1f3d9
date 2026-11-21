@@ -191,6 +191,8 @@ interface PublicPlace {
   notes: number
   moderated: boolean
   quiet: boolean
+  /** Present only where the source read knows; false means the thumbnail would answer 404. */
+  has_drawing?: boolean
   hinge?: PublicHinge | null
   children: PublicPlace[]
 }
@@ -493,6 +495,7 @@ function publicPlaceRow(value: unknown): Omit<PublicPlace, 'children'> | null {
     notes: count(row.notes),
     moderated,
     quiet: row.quiet === true,
+    ...(typeof row.has_drawing === 'boolean' ? { has_drawing: !moderated && row.has_drawing } : {}),
     ...(row.hinge !== undefined ? { hinge: publicHinge(row.hinge) } : {}),
   }
 }

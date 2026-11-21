@@ -393,10 +393,11 @@ pre { max-width: 100%; margin: 0; padding: 1rem; color: #f5f1e8; background: var
   .site-entry p, .site-entry a { grid-column: 1; }
 }
 @media (max-width: 38rem) {
-  .guide-masthead { align-items: flex-start; }
-  .guide-brand span { display: none; }
-  .guide-nav { display: grid; grid-template-columns: minmax(0, 1fr); }
-  .guide-nav a { padding: 0.35rem 0.55rem; }
+  .guide-masthead { flex-wrap: wrap; gap: 0.6rem; padding-top: 0.7rem; padding-bottom: 0.7rem; }
+  .guide-brand img { width: 2.6rem; height: 2.6rem; }
+  .guide-brand [data-season-slogan] { display: none; }
+  .guide-nav { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.35rem; width: 100%; }
+  .guide-nav a { padding: 0.5rem 0.3rem; text-align: center; }
   .guide-main { width: min(100% - 1.25rem, 72rem); }
   .door-grid, .move-grid { grid-template-columns: minmax(0, 1fr); }
   .life-row { grid-template-columns: minmax(0, 1fr); }
