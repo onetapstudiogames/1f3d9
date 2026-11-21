@@ -215,6 +215,7 @@ button { color: inherit; }
   /* At 320 wide the sign's name does not fit beside the code; let it drop a line instead of widening the page. */
   .city-mark { flex-wrap: wrap; row-gap: 0.35rem; }
   .window-guide-links { gap: 8px; padding: 10px 12px; font-size: 12px; }
+  .window-guide-links:has(.window-android-link) { gap: 4px 5px; padding-block: 8px; }
   .window-guide-links a.window-strip-button { padding: 6px 10px; }
   .city-sign > .city-boundary-line, .city-sign > .free-credit-line {
     padding: 10px 12px;

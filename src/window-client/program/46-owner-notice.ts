@@ -1,15 +1,34 @@
 // The temporary owner notice above the tab bar (holder in src/window-page.ts,
 // text, link and instants in src/window-client/owner-notice.ts). It renders at start
-// and after every city refresh; Hide lasts for this page load and stores nothing.
+// and after every city refresh. Hide uses the same browser storage as the dialog.
 export const PART_46_OWNER_NOTICE = `  const ownerNoticeBox = document.getElementById('owner-notice')
   const ownerNoticeText = document.getElementById('owner-notice-text')
   const ownerNoticeHide = document.getElementById('owner-notice-hide')
-  let ownerNoticeDismissedText = null
+  let ownerNoticeDismissed = ownerNoticeBox && readSeenAnnouncements().includes(OWNER_NOTICE.id)
+
+  function readSeenAnnouncements() {
+    try {
+      return parseSeenAnnouncementIds(localStorage.getItem(ANNOUNCEMENT_STORAGE_KEY))
+    } catch {
+      return []
+    }
+  }
+
+  function rememberClosedAnnouncement(id) {
+    try {
+      localStorage.setItem(
+        ANNOUNCEMENT_STORAGE_KEY,
+        JSON.stringify(rememberAnnouncement(readSeenAnnouncements(), id)),
+      )
+    } catch {
+      // Without browser storage the announcement shows once per page load.
+    }
+  }
 
   function renderOwnerNotice() {
     if (!ownerNoticeBox || !ownerNoticeText) return
     const text = ownerNoticeFor(Date.now(), OWNER_NOTICE)
-    if (text === null || text === ownerNoticeDismissedText) {
+    if (text === null || ownerNoticeDismissed) {
       ownerNoticeBox.hidden = true
       ownerNoticeText.replaceChildren()
       return
@@ -34,7 +53,8 @@ export const PART_46_OWNER_NOTICE = `  const ownerNoticeBox = document.getElemen
   }
 
   ownerNoticeHide?.addEventListener('click', () => {
-    ownerNoticeDismissedText = ownerNoticeText?.textContent || null
+    ownerNoticeDismissed = true
+    rememberClosedAnnouncement(OWNER_NOTICE.id)
     renderOwnerNotice()
     tabs.find(tab => tab.getAttribute('aria-selected') === 'true')?.focus()
   })

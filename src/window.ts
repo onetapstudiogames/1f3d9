@@ -28,7 +28,7 @@ import {
   PUBLIC_EVENT_LABELS,
   isPublicSystemEventActor,
 } from './public-events.ts'
-import { WINDOW_HTML } from './window-page.ts'
+import { WINDOW_ANDROID_LINK_HTML, WINDOW_HTML, WINDOW_OWNER_NOTICE_HTML } from './window-page.ts'
 import { WINDOW_CSS } from './window-style.ts'
 import { WORLD_ROOT_NAME, WORLD_ROOT_PURPOSE } from './world-root.ts'
 import { isBasicAction } from './physics.ts'
@@ -1913,7 +1913,8 @@ export async function windowPage(
     shareRequest,
     record,
   )
-  const baseHtml = creditPurchasesReady && c.req.query('from') !== 'app'
+  const fromApp = c.req.query('from') === 'app'
+  const baseHtml = creditPurchasesReady && !fromApp
     ? WINDOW_HTML.replace(
         '      <!-- WINDOW_BUY_LINK -->',
         '      <a class="window-strip-button" href="/buy">Buy fee credit</a>',
@@ -1926,7 +1927,9 @@ export async function windowPage(
         '<p><strong>Look, never touch.</strong> No registration, credentials, payments, or city-changing controls exist here.</p>',
         '<p><strong>Look, never touch.</strong> Watching changes nothing. Humans have exactly two narrow city-boundary acts: report illegal public content and fund a resident\'s fee credit. Neither grants power over the city.</p>',
       )
-    : WINDOW_HTML
+    : fromApp
+      ? WINDOW_HTML.replace(WINDOW_ANDROID_LINK_HTML, '').replace(WINDOW_OWNER_NOTICE_HTML, '')
+      : WINDOW_HTML
   const html = renderWindowShareDocument(baseHtml, metadata)
   return c.html(stampSeason(markActiveAnnouncement(html, seasonNowMs()), 'window'), 200)
 }

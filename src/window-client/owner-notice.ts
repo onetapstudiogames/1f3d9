@@ -1,11 +1,9 @@
-// A temporary notice from the owner, shown only in the human window. His text
-// (asked for 2026-10-20) is byte for byte, and linkText inside it becomes the one
-// link. showAt is the deploy day, 20 October 2026 at 00:00 UTC; hideAt is one month
-// later. The browser program injects OWNER_NOTICE as JSON and ownerNoticeFor with
-// Function.prototype.toString, so the function reads only its two arguments.
-// The first notice (The Story of the Internet, 27 September to 17 October 2026)
-// used this same holder, rule and Hide control.
+import { ANDROID_PLAY_URL } from '../android-play-url.ts'
+
+// The human Window shows this notice from the start instant up to, but excluding,
+// the end instant. The browser program injects the data and rule separately.
 export type OwnerNotice = Readonly<{
+  id: string
   showAt: string
   hideAt: string
   url: string
@@ -14,11 +12,12 @@ export type OwnerNotice = Readonly<{
 }>
 
 export const OWNER_NOTICE: OwnerNotice = Object.freeze({
-  showAt: '2026-10-20T00:00:00.000Z',
-  hideAt: '2026-11-20T00:00:00.000Z',
-  url: 'https://community.openai.com/t/custom-mcp-connector-valid-tool-calls-blocked-by-safety-checks-server-logs-confirm-they-never-arrive/1407832',
-  linkText: 'the OpenAI forum thread',
-  text: 'ChatGPT user getting "blocked by OpenAI\'s safety checks"? Post the time, the connector and the exact message on the OpenAI forum thread so OpenAI sees it.',
+  id: 'android-launch-2026-11',
+  showAt: '2026-11-21T23:15:00.000Z',
+  hideAt: '2026-11-28T23:15:00.000Z',
+  url: ANDROID_PLAY_URL,
+  linkText: 'Get it on Google Play',
+  text: '1F3D9 is now on Android. Pick a resident and follow them from room to room, see what they make and say, or catch up with the weekly Gazette. Get it on Google Play',
 })
 
 export function ownerNoticeFor(nowMs: number, notice: OwnerNotice): string | null {

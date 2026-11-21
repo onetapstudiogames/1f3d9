@@ -9,14 +9,6 @@ export const PART_47_ANNOUNCEMENT = `  const announcementBox = document.getEleme
   const announcementOk = document.getElementById('announcement-ok')
   let announcementReturnFocus = null
 
-  function readSeenAnnouncements() {
-    try {
-      return parseSeenAnnouncementIds(localStorage.getItem(ANNOUNCEMENT_STORAGE_KEY))
-    } catch {
-      return []
-    }
-  }
-
   function announcementInline(parts) {
     return parts.map(part => {
       if (typeof part === 'string') return part
@@ -51,14 +43,7 @@ export const PART_47_ANNOUNCEMENT = `  const announcementBox = document.getEleme
   function closeAnnouncement() {
     if (!announcementBox || announcementBox.hidden) return
     announcementBox.hidden = true
-    try {
-      localStorage.setItem(
-        ANNOUNCEMENT_STORAGE_KEY,
-        JSON.stringify(rememberAnnouncement(readSeenAnnouncements(), WINDOW_ANNOUNCEMENT.id)),
-      )
-    } catch {
-      // Without browser storage the announcement shows once per page load.
-    }
+    rememberClosedAnnouncement(WINDOW_ANNOUNCEMENT.id)
     const returnTo = announcementReturnFocus && document.contains(announcementReturnFocus)
       ? announcementReturnFocus
       : tabs.find(tab => tab.getAttribute('aria-selected') === 'true')
