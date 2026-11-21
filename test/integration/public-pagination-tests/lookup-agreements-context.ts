@@ -96,6 +96,76 @@ export async function registerLookupAgreementsContextTests(
     }
   })
 
+  await t.test('agreement search pages older literal matches without revealing removed or redacted text', async () => {
+    const { default: cityApp } = await import('../../../src/index.ts')
+    const bodies = [
+      'Cedar lease 100%_paid 🏙',
+      'cedar lease 100XXpaid',
+      'New Cedar Lease note',
+      'Cedar lease keeper-only wording',
+      `Cedar lease historical fixture 1f3d9_sk_${'dead'.repeat(12)}`,
+    ]
+    const inserted = await postgres.client.query<{ id: number }>(`
+      INSERT INTO agreements (created_by_id, body)
+      SELECT 1, body FROM unnest($1::text[]) WITH ORDINALITY AS input(body, position)
+      ORDER BY position
+      RETURNING id
+    `, [bodies])
+    const [oldest, near, newest, removed, redacted] = inserted.rows.map(row => row.id) as [
+      number, number, number, number, number,
+    ]
+    await postgres.client.query(`
+      INSERT INTO agreement_parties (agreement_id, resident_id)
+      SELECT id, 1 FROM unnest($1::integer[]) AS selected(id)
+    `, [[oldest, newest, removed, redacted]])
+    const moderate = (action: 'remove' | 'restore') => postgres.client.query(`
+      INSERT INTO moderation_actions (target_type, target_id, action, actor_id, reason)
+      VALUES ('agreement', $1, $2, 1, 'agreement search fixture')
+    `, [removed, action])
+    await moderate('remove')
+
+    async function read(q: string, filters: Record<string, string> = {}) {
+      const query = new URLSearchParams({ q, ...filters })
+      const response = await cityApp.request(`http://city.test/api/agreements?${query}`)
+      assert.equal(response.status, 200, await response.clone().text())
+      const result = await response.json() as {
+        agreements: Array<{ id: number; body: string }>
+        total_items: number
+        total_text_bytes: number
+        has_more: boolean
+        next_before_id: number | null
+      }
+      return { ...result, ids: result.agreements.map(row => row.id) }
+    }
+
+    const filters = { party: 'resident-1', open: 'true', limit: '1' }
+    const first = await read(' CEDAR lease ', filters)
+    assert.deepEqual(first.ids, [newest])
+    assert.equal(first.total_items, 2)
+    assert.equal(first.total_text_bytes, Buffer.byteLength(bodies[0]!) + Buffer.byteLength(bodies[2]!))
+    assert.equal(first.has_more, true)
+    assert.equal(first.next_before_id, newest)
+    const later = await read('cedar lease', { ...filters, before_id: String(first.next_before_id) })
+    assert.deepEqual(later.ids, [oldest])
+    assert.equal(later.agreements[0]?.body, bodies[0])
+    assert.equal(later.total_items, first.total_items)
+    assert.equal(later.has_more, false)
+    assert.equal(later.next_before_id, null)
+    assert.deepEqual((await read('100%_paid')).ids, [oldest])
+    assert.deepEqual((await read('100XXpaid')).ids, [near])
+    assert.deepEqual((await read(`#${oldest}`)).ids, [oldest])
+    assert.deepEqual((await read(`#${oldest}`, { before_id: String(oldest) })).ids, [])
+
+    for (const hidden of ['keeper-only', 'historical fixture', `#${removed}`, `#${redacted}`]) {
+      const result = await read(hidden)
+      assert.deepEqual(result.ids, [])
+      assert.equal(result.total_items, 0)
+      assert.equal(result.total_text_bytes, 0)
+    }
+    await moderate('restore')
+    assert.deepEqual((await read('keeper-only')).ids, [removed])
+  })
+
   await t.test('a followed resident view carries same-place context', async () => {
     const client = postgres.client
     const room = (await client.query<{ id: number }>(

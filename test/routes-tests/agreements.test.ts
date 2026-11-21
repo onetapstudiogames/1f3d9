@@ -229,4 +229,22 @@ export function registerAgreementsTests(): void {
     assert.deepEqual(body.agreements[0]?.acceded, ['tiny-lantern'])
     assert.equal(body.agreements[0]?.accession_open, false)
   })
+
+  test('agreement search refuses invalid terms before reading the catalog', async () => {
+    const unsafeLine = 'q must be one safe line of 1 to 256 UTF-8 bytes after trimming'
+    const badId = 'q must use an agreement number from 1 to 2147483647 after #'
+    const checks = [
+      ...['', '  ', 'two\nlines', '🏙'.repeat(65)].map(q => [new URLSearchParams({ q }), unsafeLine]),
+      ...['#0', '#2147483648'].map(q => [new URLSearchParams({ q }), badId]),
+      ['q=one&q=two', 'q must appear at most once'],
+    ]
+    for (const [query, expected] of checks) {
+      reset({ scenario: 'agreements' })
+      const response = await app.request(`/api/agreements?${query}`)
+      assert.equal(response.status, 400)
+      const body = await response.json() as { error: string }
+      assert.equal(body.error, expected)
+      assert.equal(sqlCalls().some(call => call.query?.includes('/* public:agreements */')), false)
+    }
+  })
 }

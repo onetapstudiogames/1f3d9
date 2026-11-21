@@ -103,6 +103,7 @@ import { fillMutedPage } from './page-fill.ts'
 import { loadPublicNoteRecord } from './public-records.ts'
 import { safeReadingCostMeter } from './reading-cost.ts'
 import { executeBudgetedExactQuery } from './public-exact-query.ts'
+import { PUBLIC_SEARCH_QUERY_MAX_BYTES } from './public-search-limits.ts'
 import { AGREEMENT_BYTES, MAX_PARTIES, NOTE_CHARACTERS } from './society-limits.ts'
 import { readNoteHere } from './read-here.ts'
 import { dailyLimit, holdLimitRefusal } from './resident-hold.ts'
@@ -114,7 +115,7 @@ import {
   replyNotNamedRefusal,
 } from './moderation-review.ts'
 import { NOTE_BODY_PIECE_KEYS, parseNoteBodyPiece, shapeNoteRead } from './note-body-piece.ts'
-import { sanitizePublicValue } from './credential-safety.ts'
+import { PUBLIC_CREDENTIAL_PATTERN_SOURCE, sanitizePublicValue } from './credential-safety.ts'
 import {
   publicNoteRow,
   WALK_TO_READ_GAZETTE_REFUSAL,
@@ -536,7 +537,7 @@ export function mountSocietyRoutes(app: Hono): void {
 
   app.get('/api/agreements', async c => {
     const queries = c.req.queries()
-    const allowed = allowedPublicQuery(queries, ['party', 'open', 'before_id', 'limit', 'show_everything', 'hidden'])
+    const allowed = allowedPublicQuery(queries, ['party', 'open', 'q', 'before_id', 'limit', 'show_everything', 'hidden'])
     if (!allowed.ok) return err(c, 400, allowed.error)
     const showEverything = parseShowEverything(queries)
     if (!showEverything.ok) return err(c, 400, SHOW_EVERYTHING_REFUSAL)
@@ -554,12 +555,45 @@ export function mountSocietyRoutes(app: Hono): void {
     if (openValue != null && openValue !== 'true' && openValue !== 'false')
       return err(c, 400, 'open must be true or false')
     const open = openValue == null ? null : openValue === 'true'
+    const queryValue = singlePublicQueryValue(queries, 'q')
+    if (!queryValue.ok) return err(c, 400, queryValue.error)
+    const query = queryValue.value?.trim() ?? null
+    if (queryValue.value != null && (
+      /[\r\n]/u.test(queryValue.value) ||
+      publicText(queryValue.value) === null ||
+      Buffer.byteLength(query ?? '', 'utf8') > PUBLIC_SEARCH_QUERY_MAX_BYTES
+    )) {
+      return err(c, 400, `q must be one safe line of 1 to ${PUBLIC_SEARCH_QUERY_MAX_BYTES} UTF-8 bytes after trimming`)
+    }
+    const isIdQuery = query !== null && /^#[0-9]+$/u.test(query)
+    const searchId = isIdQuery ? positiveId(query.slice(1)) : null
+    if (isIdQuery && searchId === null) {
+      return err(c, 400, 'q must use an agreement number from 1 to 2147483647 after #')
+    }
+
+    // A removed or credential-bearing body must influence neither matches nor their totals.
+    const match = query === null ? '' : `
+      WHERE ${searchId === null ? 'strpos(lower(agreement.body), lower($5::text)) > 0' : 'agreement.id = $5::integer'}
+        AND agreement.body !~* $6::text
+        AND coalesce((
+          SELECT moderation.action
+          FROM moderation_actions moderation
+          WHERE moderation.target_type = 'agreement' AND moderation.target_id = agreement.id
+          ORDER BY moderation.created_at DESC, moderation.id DESC
+          LIMIT 1
+        ), 'restore') <> 'remove'
+    `
+    const searchParams = query === null ? [] : [searchId ?? query, PUBLIC_CREDENTIAL_PATTERN_SOURCE]
     const readAgreementRows = (cursor: number | null, fetchLimit: number) => executeBudgetedExactQuery(`
       /* public:agreements */
-      WITH totals AS (
+      WITH matched_agreements AS NOT MATERIALIZED (
+        SELECT agreement.id, agreement.body, agreement.created_by_id, agreement.created_at
+        FROM agreements agreement
+        ${match}
+      ), totals AS (
         SELECT count(*)::integer AS total_items,
           coalesce(sum(octet_length(agreement.body)), 0)::bigint AS total_text_bytes
-        FROM agreements agreement
+        FROM matched_agreements agreement
         WHERE ($1::text IS NULL OR EXISTS (
           SELECT 1
           FROM agreement_parties party
@@ -591,7 +625,7 @@ export function mountSocietyRoutes(app: Hono): void {
                 WHERE s.agreement_id = a.id AND s.resident_id = ap.resident_id)
           ) AS complete,
           a.created_at
-        FROM agreements a JOIN residents creator ON creator.id = a.created_by_id
+        FROM matched_agreements a JOIN residents creator ON creator.id = a.created_by_id
       )
       SELECT page.id, page.body, page.created_by, page.parties, page.acceded,
         page.signatures, page.accession_open, page.open, page.created_at,
@@ -608,7 +642,7 @@ export function mountSocietyRoutes(app: Hono): void {
         ORDER BY id DESC LIMIT $4::integer
       ) page ON TRUE
       ORDER BY page.id DESC NULLS LAST
-    `, [party ?? null, open, cursor, fetchLimit])
+    `, [party ?? null, open, cursor, fetchLimit, ...searchParams])
     type AgreementRow = Record<string, unknown> & { id: number }
     const collection = extractPublicCollectionRows(await readAgreementRows(parsed.cursor, parsed.fetchLimit))
     // Focus mode (decision #155): a signed-in reader who chose it gets each agreement's

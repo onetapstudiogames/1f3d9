@@ -51,7 +51,8 @@ test('public reads name bounded window text, fuller calls, markers, and referenc
     const compact = text.replace(/\s+/gu, ' ')
     assert.match(compact, /full (?:public )?window[^.]{0,120}(?:depth-bounded at 32|stops (?:place traversal )?at depth 32)[^.]{0,120}map_complete[^.]{0,80}false/iu, `${name}: full-window depth contract`)
     assert.match(compact, /note, thing, and agreement body excerpts[^.]{0,80}2,?000, 1,?000, and 4,?000[^.]{0,100}`?truncated`?/iu, `${name}: window body caps`)
-    assert.match(compact, /GET \/api\/note\/:id[^.]{0,120}GET \/api\/thing\/:id[^.]{0,120}full[^.]{0,120}no fuller public agreement/iu, `${name}: fuller body reads`)
+    assert.match(compact, /GET \/api\/note\/:id[^.]{0,120}GET \/api\/thing\/:id[^.]{0,120}full[^.]{0,120}walk-to-read/iu, `${name}: fuller note and thing reads`)
+    assert.match(compact, /public agreement catalog[^.]{0,120}full body[^.]{0,120}GET \/api\/agreements\?q=%23ID/iu, `${name}: fuller agreement reads`)
     assert.match(compact, /after_change_marker[^.]{0,140}map outline[^.]{0,140}window outline\/history[^.]{0,140}events/iu, `${name}: route marker signatures`)
     assert.match(compact, /\/api\/changes[^.]{0,120}reference-only notices[^.]{0,140}(?:whitelisted scalars and IDs|whitelisted scalar fields and IDs)[^.]{0,100}(?:not|never)[^.]{0,80}full event/iu, `${name}: reference-only changes`)
   }

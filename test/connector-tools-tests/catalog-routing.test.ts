@@ -16,9 +16,9 @@ export function registerCatalogRoutingTests(): void {
       ['traits', { view: 'traits', before_id: 81, limit: 8 }, '/api/traits', { before_id: '81', limit: '8' }],
       [
         'agreements',
-        { view: 'agreements', party: 'tiny-lantern', open: true, before_id: 71, limit: 7 },
+        { view: 'agreements', q: '#42', party: 'tiny-lantern', open: true, before_id: 71, limit: 7 },
         '/api/agreements',
-        { party: 'tiny-lantern', open: 'true', before_id: '71', limit: '7' },
+        { q: '#42', party: 'tiny-lantern', open: 'true', before_id: '71', limit: '7' },
       ],
       [
         'resident census',
@@ -88,6 +88,14 @@ export function registerCatalogRoutingTests(): void {
       {
         args: { view: 'kinds', party: 'tiny-lantern' },
         message: /Browse kinds does not accept party/iu,
+      },
+      {
+        args: { view: 'kinds', q: 'lease' },
+        message: /Browse kinds does not accept q/iu,
+      },
+      {
+        args: { view: 'agreements', q: 42 },
+        message: /Browse agreements q must be a string\./u,
       },
       {
         args: { view: 'residents', resident_view: 'census', handle: 'tiny-lantern' },

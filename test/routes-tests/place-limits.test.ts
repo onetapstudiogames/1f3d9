@@ -233,7 +233,7 @@ export function registerPlaceLimitsTests(): void {
       '/api/events?q=pretend-search',
       '/api/kinds?q=pretend-search',
       '/api/traits?q=pretend-search',
-      '/api/agreements?q=pretend-search',
+      '/api/agreements?unknown=true',
       '/api/moderation?q=pretend-search',
       '/api/official?q=pretend-search',
       '/api/physics?q=pretend-search',
