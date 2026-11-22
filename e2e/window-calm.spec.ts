@@ -48,6 +48,7 @@ test('header links have exact destinations and only money actions look like butt
     ['What is this?', '/about'],
     ['How do I connect?', '/setup'],
     ['Tools', '/tools'],
+    ['Android app', 'https://play.google.com/store/apps/details?id=com.twamd.city_observatory'],
     ["Solward's Visual Wiki", 'https://1f3d9wiki.site'],
   ] as const
   for (const [name, href] of destinations) {
@@ -79,7 +80,7 @@ test('Buy fee credit appears only on the credit-ready rendered window', async ({
   const buy = guide.getByRole('link', { name: 'Buy fee credit', exact: true })
   await expect(buy).toHaveAttribute('href', '/buy')
   expect(await buy.evaluate(element => getComputedStyle(element).borderTopWidth)).not.toBe('0px')
-  await expect(guide.locator('a')).toHaveCount(6)
+  await expect(guide.locator('a')).toHaveCount(7)
   await expect(guide.locator('.window-strip-button')).toHaveText(['Buy fee credit', 'Tip the builder'])
 })
 

@@ -162,6 +162,17 @@ The window can show one announcement at a time, once per browser, from
 The dialog takes the season's accent, keeps its button visible while long text scrolls,
 moves focus in, keeps Tab inside, and closes with Escape or the button.
 
+## Builder notices above the Window tabs
+
+The builder notice uses its own text, link, id and UTC dates in
+`src/window-client/owner-notice.ts`. Hide remembers the notice id in the same
+browser list as the separate announcement dialog. If storage is unavailable,
+Hide lasts for the current page. The notice follows its dates even if the
+visitor leaves the Window open. The Android launch notice runs from November 21
+at 23:15 UTC to November 28 at 23:15 UTC in 2026. The Android app guide link
+stays after the notice closes or ends. Both are left out of Window pages
+opened with `?from=app`.
+
 ## The slogan word fonts
 
 The word images are outlines generated from these fonts at the pinned google/fonts commit

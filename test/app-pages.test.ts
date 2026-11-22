@@ -49,6 +49,18 @@ test('app pages hide purchase links and sentences, preserve legal text, and cann
   assert.equal(await terms.text(), TERMS_TEXT.replace(WEEKLY_PAYPAL_PARAGRAPH, ''))
 })
 
+test('only the web Window offers the Android app install link and launch notice', async () => {
+  const app = new Hono()
+  app.use('*', appPagePurchaseLinks)
+  app.get('/window/:view', c => windowPage(c, true))
+  const normal = await (await app.request('/window/map')).text()
+  const embedded = await (await app.request('/window/map?from=app')).text()
+  assert.match(normal, />Android app<\/a>/u)
+  assert.match(normal, /id="owner-notice"/u)
+  assert.doesNotMatch(embedded, /play\.google\.com|id="owner-notice"/u)
+  assert.match(embedded, /id="announcement"/u)
+})
+
 // The one Terms paragraph the app leaves out (decision 200), word for word as the website
 // serves it, with the blank line after it. If its words change, these tests fail loudly.
 const WEEKLY_PAYPAL_PARAGRAPH = [

@@ -6,31 +6,27 @@ import { WINDOW_JS } from '../src/window-client.ts'
 import { WINDOW_HTML } from '../src/window-page.ts'
 import { WINDOW_CSS } from '../src/window-style.ts'
 
-// The owner's text, byte for byte (asked for 2026-10-20). This test keeps its own copy on purpose.
-const TEXT = 'ChatGPT user getting "blocked by OpenAI\'s safety checks"? Post the time, the connector and the exact message on the OpenAI forum thread so OpenAI sees it.'
-const LINK_TEXT = 'the OpenAI forum thread'
-// The topic itself, so a visitor lands on the first post.
-const THREAD = 'https://community.openai.com/t/custom-mcp-connector-valid-tool-calls-blocked-by-safety-checks-server-logs-confirm-they-never-arrive/1407832'
+// Keep the owner's approved text and store address here independently of the source.
+const TEXT = '1F3D9 is now on Android. Pick a resident and follow them from room to room, see what they make and say, or catch up with the weekly Gazette. Get it on Google Play'
+const LINK_TEXT = 'Get it on Google Play'
+const PLAY = 'https://play.google.com/store/apps/details?id=com.twamd.city_observatory'
 const SECOND_MS = 1000
-const SHOW_AT_MS = Date.parse('2026-10-20T00:00:00.000Z')
-const HIDE_AT_MS = Date.parse('2026-11-20T00:00:00.000Z')
+const SHOW_AT_MS = Date.parse('2026-11-21T23:15:00.000Z')
+const HIDE_AT_MS = Date.parse('2026-11-28T23:15:00.000Z')
 
-test('the notice holds the owner text byte for byte, one link to the thread, and two instants a month apart', () => {
+test('the notice holds the approved text and one Google Play link for exactly one week', () => {
   assert.equal(OWNER_NOTICE.text, TEXT)
   assert.equal(OWNER_NOTICE.linkText, LINK_TEXT)
-  assert.equal(OWNER_NOTICE.url, THREAD)
-  assert.equal(OWNER_NOTICE.showAt, '2026-10-20T00:00:00.000Z')
-  assert.equal(OWNER_NOTICE.hideAt, '2026-11-20T00:00:00.000Z')
-  assert.equal(HIDE_AT_MS - SHOW_AT_MS, 31 * 24 * 60 * 60 * SECOND_MS)
-  assert.equal(TEXT.split(LINK_TEXT).length, 2, 'the link text appears exactly once')
-  assert.doesNotMatch(TEXT, /[\u2013\u2014\u2018\u2019\u201C\u201D]/u, 'no long dash or curly quote')
-  assert.ok(THREAD.endsWith('/1407832'), 'the topic itself, not a reply number')
+  assert.equal(OWNER_NOTICE.url, PLAY)
+  assert.equal(Date.parse(OWNER_NOTICE.showAt), SHOW_AT_MS)
+  assert.equal(Date.parse(OWNER_NOTICE.hideAt), HIDE_AT_MS)
+  assert.equal(HIDE_AT_MS - SHOW_AT_MS, 7 * 24 * 60 * 60 * SECOND_MS)
+  assert.ok(TEXT.endsWith(LINK_TEXT))
   assert.ok(Object.isFrozen(OWNER_NOTICE))
 })
 
 test('the text shows from the show instant until the hide instant and never outside it', () => {
   const at = (ms: number) => ownerNoticeFor(ms, OWNER_NOTICE)
-  assert.equal(at(Date.parse('2026-10-19T12:00:00.000Z')), null)
   assert.equal(at(SHOW_AT_MS - SECOND_MS), null)
   assert.equal(at(SHOW_AT_MS), TEXT)
   assert.equal(at(SHOW_AT_MS + SECOND_MS), TEXT)
@@ -63,12 +59,16 @@ test('the page holds one empty hidden notice right above the tab bar, and the pa
     /<div id="owner-notice" class="owner-notice" role="note" aria-label="Notice from the builder" hidden>\n\s*<p id="owner-notice-text" class="owner-notice-text"><\/p>\n\s*<button id="owner-notice-hide" class="owner-notice-hide" type="button" aria-label="Hide this notice">Hide<\/button>\n\s*<\/div>/u,
   )
   assert.equal(WINDOW_HTML.match(/id="owner-notice"/gu)?.length, 1)
-  assert.doesNotMatch(WINDOW_HTML, /1407832|forum thread/iu)
+  assert.ok(!WINDOW_HTML.includes(TEXT))
+  const guide = WINDOW_HTML.split('<nav class="window-guide-links"')[1]?.split('</nav>')[0] ?? ''
+  assert.ok(guide.indexOf('>Tools</a>') < guide.indexOf('>Android app</a>'))
+  assert.ok(guide.indexOf('>Android app</a>') < guide.indexOf('Visual Wiki'))
+  assert.ok(guide.includes('href="' + PLAY + '"'))
   assert.match(WINDOW_CSS, /\.owner-notice \{[^}]*background-image: linear-gradient\(100deg, var\(--signal\) 0%, var\(--paper-light\) 100%\);/u)
   assert.match(WINDOW_CSS, /\.owner-notice \{[^}]*border-inline-start: 0\.6rem solid var\(--brick\);/u)
 })
 
-test('the program renders the notice at start and after every city refresh, with one plain link and no storage', () => {
+test('the program renders the notice at start and after every city refresh, with one plain link', () => {
   assert.match(WINDOW_JS, /\n  function renderOwnerNotice\(\) \{\n/u)
   assert.match(WINDOW_JS, /ownerNoticeFor\(Date\.now\(\), OWNER_NOTICE\)/u)
   const refreshStart = WINDOW_JS.indexOf('  async function refreshCity()')
@@ -98,6 +98,6 @@ test('no surface an agent reads carries the notice', () => {
     'CHANGELOG.md',
     'src/changelog-source.ts',
   ]) {
-    assert.doesNotMatch(read(path), /1407832|ofstory|Story of the Internet/iu, path)
+    assert.doesNotMatch(read(path), /Get it on Google Play|play\.google\.com\/store\/apps\/details/iu, path)
   }
 })

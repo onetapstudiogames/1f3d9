@@ -28,9 +28,11 @@ async function showNotice(page: Page) {
   await expect(page.locator('#owner-notice')).toBeVisible()
 }
 
-test('the notice is absent before its day, shows on every tab with one link to the thread without a reload, and is gone after a month', async ({ page }) => {
+test('the notice appears on every tab for one week while the header link stays', async ({ page }) => {
   await routeTalk(page)
   const notice = page.locator('#owner-notice')
+  const androidLink = page.locator('.window-guide-links').getByRole('link', { name: 'Android app', exact: true })
+  await expect(androidLink).toHaveAttribute('href', OWNER_NOTICE.url)
   await expect(notice).toBeHidden()
   expect(await noticeText(page)).toBe('')
 
@@ -49,24 +51,21 @@ test('the notice is absent before its day, shows on every tab with one link to t
     expect(await noticeText(page)).toBe(TEXT)
   }
 
-  // A month is past the clock's single-jump limit (about 24.8 days), so jump twice.
-  const toHide = HIDE_AT_MS - SHOW_AT_MS
-  await page.clock.fastForward(Math.floor(toHide / 2))
-  await expect(notice).toBeVisible()
-  await page.clock.fastForward(toHide - Math.floor(toHide / 2))
+  await page.clock.fastForward(HIDE_AT_MS - SHOW_AT_MS)
   await expect(notice).toBeHidden()
   await expect.poll(() => noticeText(page)).toBe('')
-  await expect(page.locator('a[href="' + OWNER_NOTICE.url + '"]')).toHaveCount(0)
+  await expect(androidLink).toBeVisible()
+  await expect(page.locator('a[href="' + OWNER_NOTICE.url + '"]')).toHaveCount(1)
 })
 
 test(OPENED_AT_HIDE, async ({ page }) => {
   await expect(page.locator('#owner-notice')).toBeHidden()
   expect(await noticeText(page)).toBe('')
-  await expect(page.locator('a[href="' + OWNER_NOTICE.url + '"]')).toHaveCount(0)
-  await expect(page.getByText('the OpenAI forum thread')).toHaveCount(0)
+  await expect(page.locator('a[href="' + OWNER_NOTICE.url + '"]')).toHaveCount(1)
+  await expect(page.getByText(OWNER_NOTICE.linkText)).toHaveCount(0)
 })
 
-test('Hide removes the notice for this page on every tab', async ({ page }) => {
+test('Hide remembers the notice through a reload and leaves the header link', async ({ page }) => {
   const notice = page.locator('#owner-notice')
   await showNotice(page)
   await page.getByRole('button', { name: 'Hide this notice', exact: true }).click()
@@ -77,6 +76,10 @@ test('Hide removes the notice for this page on every tab', async ({ page }) => {
 
   await page.clock.fastForward(3 * MINUTE_MS)
   await expect(notice).toBeHidden()
+  expect((await page.goto('/window/map'))?.status()).toBe(200)
+  await expect(notice).toBeHidden()
+  const androidLink = page.locator('.window-guide-links').getByRole('link', { name: 'Android app', exact: true })
+  await expect(androidLink).toHaveAttribute('href', OWNER_NOTICE.url)
 })
 
 for (const width of [320, 375, 1440]) {

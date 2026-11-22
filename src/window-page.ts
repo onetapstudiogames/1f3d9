@@ -1,3 +1,4 @@
+import { ANDROID_PLAY_URL } from './android-play-url.ts'
 import {
   COMMUNITY_TOOLS,
   renderCommunityToolLink,
@@ -10,6 +11,15 @@ import {
 } from './window-history-limits.ts'
 
 const VISUAL_WIKI = COMMUNITY_TOOLS[0]
+
+export const WINDOW_ANDROID_LINK_HTML = `      <a class="window-android-link" href="${ANDROID_PLAY_URL}" rel="external">Android app</a>
+      <span class="window-link-dot" aria-hidden="true">·</span>
+`
+
+export const WINDOW_OWNER_NOTICE_HTML = `  <div id="owner-notice" class="owner-notice" role="note" aria-label="Notice from the builder" hidden>
+    <p id="owner-notice-text" class="owner-notice-text"></p>
+    <button id="owner-notice-hide" class="owner-notice-hide" type="button" aria-label="Hide this notice">Hide</button>
+  </div>`
 
 export const WINDOW_HTML = `<!doctype html>
 <html lang="en">
@@ -50,7 +60,7 @@ export const WINDOW_HTML = `<!doctype html>
       <span class="window-link-dot" aria-hidden="true">·</span>
       <a href="/tools">Tools</a>
       <span class="window-link-dot" aria-hidden="true">·</span>
-      ${renderCommunityToolLink(VISUAL_WIKI)}
+${WINDOW_ANDROID_LINK_HTML}      ${renderCommunityToolLink(VISUAL_WIKI)}
       <span class="window-guide-spacer" aria-hidden="true"></span>
       <span class="window-strip-buttons">
       <!-- WINDOW_BUY_LINK -->
@@ -62,10 +72,7 @@ export const WINDOW_HTML = `<!doctype html>
     <p id="city-counts" class="city-counts">Reading the public streets…</p>
   </header>
 
-  <div id="owner-notice" class="owner-notice" role="note" aria-label="Notice from the builder" hidden>
-    <p id="owner-notice-text" class="owner-notice-text"></p>
-    <button id="owner-notice-hide" class="owner-notice-hide" type="button" aria-label="Hide this notice">Hide</button>
-  </div>
+${WINDOW_OWNER_NOTICE_HTML}
 
   ${WINDOW_MOVE_IN_HTML}
 

@@ -3726,16 +3726,18 @@ RPC (`chain.ts`), durable x402 payment custody (`pay.ts` + `payment-flow.ts`), f
   its share metadata uses the first line and never the body.
 - A note removed by founder moderation shows its author, place, and time with "Removed by
   the maintainer." in place of its text (decision #129).
-- A temporary notice from the builder sits right above the tab bar on every window tab.
-  `OWNER_NOTICE` in `src/window-client/owner-notice.ts` holds its one text, the words in
-  it that become its one link, the link, and its two instants: by the page clock the
-  window shows the text from the show instant and nothing before it or from the hide
-  instant. From 20 October to 20 November 2026 it asks ChatGPT users who see "blocked by
-  OpenAI's safety checks" to post on the builder's OpenAI forum thread (the first notice,
-  about his other project, ran 27 September to 17 October 2026). It renders when the
-  program starts and after every city refresh, uses no script, tracker, or third-party
-  asset, and its Hide control lasts for that page load only. The front door, llms.txt,
-  the reference, the MCP door, the live view, and the plugin never carry it.
+- A temporary notice from the builder sits right above the tab bar on every web Window
+  tab. `OWNER_NOTICE` in `src/window-client/owner-notice.ts` holds its id, text, link and
+  two UTC instants. The browser shows it from the start instant until the end instant,
+  checking when the program starts and after each city refresh. The Android launch notice
+  starts on 21 November 2026 at 23:15 UTC and ends on 28 November 2026 at 23:15 UTC.
+  Hide remembers the notice id in the same browser list as the separate announcement
+  dialog. When browser storage is unavailable, Hide lasts for the current page.
+  The front door, llms.txt, the reference, MCP, the live view and the plugin do not
+  carry the notice.
+- The permanent Android app guide link sits between Tools and Solward's Visual Wiki in
+  the web Window. It and the launch notice use the same Google Play address, defined in
+  `src/android-play-url.ts`. Both are left out of the Window opened with `?from=app`.
 - Notes in Conversations and Place offer a deliberate Decode control for complete,
   recognizable binary-byte, Morse, or printable UTF-8 base64 text. The viewer shows
   the result beneath the untouched original with the label Decoded, never records
