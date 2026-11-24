@@ -148,10 +148,15 @@ test('the index is built only over the reviewed function and repaired only when 
   }
 })
 
-test('the production room keys check takes only a phase and up to twenty room ids', async () => {
+test('the production room keys check takes only a phase, up to twenty room ids and up to five kinds', async () => {
   const { parseRoomKeysCheckArgs } = await import('../scripts/check-room-events-keys.ts')
-  assert.deepEqual(parseRoomKeysCheckArgs(['--phase', 'function']), { phase: 'function', rooms: [3] })
-  assert.deepEqual(parseRoomKeysCheckArgs(['--phase', 'index', '--rooms', '3,1093']), { phase: 'index', rooms: [3, 1093] })
+  assert.deepEqual(parseRoomKeysCheckArgs(['--phase', 'function']), { phase: 'function', rooms: [3], kinds: [] })
+  assert.deepEqual(parseRoomKeysCheckArgs(['--phase', 'index', '--rooms', '3,1093']), { phase: 'index', rooms: [3, 1093], kinds: [] })
+  assert.deepEqual(parseRoomKeysCheckArgs(['--phase', 'index', '--rooms', '1', '--kinds', 'note,thing_moved']),
+    { phase: 'index', rooms: [1], kinds: ['note', 'thing_moved'] })
+  for (const kinds of ['', 'Note', 'note,', "note';--", 'a,b,c,d,e,f', 'x'.repeat(65)]) {
+    assert.throws(() => parseRoomKeysCheckArgs(['--phase', 'index', '--kinds', kinds]), /--kinds lists 1 to 5 event kinds/u)
+  }
   assert.throws(() => parseRoomKeysCheckArgs([]), /--phase is function or index/u)
   assert.throws(() => parseRoomKeysCheckArgs(['--phase', 'apply']), /--phase is function or index/u)
   assert.throws(() => parseRoomKeysCheckArgs(['--phase', 'index', '--rooms', '0']), /--rooms lists 1 to 20 room ids/u)

@@ -60,7 +60,7 @@ const raw = async (text: string, params: readonly unknown[]): Promise<readonly R
   (await connectedDatabase().query(text, [...params])).rows
 
 type Fixture = Readonly<{
-  continent: number; home: number; square: number; side: number; below: number; corner: number
+  world: number; continent: number; home: number; square: number; side: number; below: number; corner: number
   feedBelow: number; small: number
   things: Readonly<{ square: number; side: number; below: number; feed: number; home: number; small: number; gone: number }>
   notes: Readonly<{ square: number; corner: number; feed: number; home: number }>
@@ -74,6 +74,7 @@ async function seedRoomReads(): Promise<Fixture> {
   const five = await seedFiveStates(db)
   const home = five.rooms.home
   const continent = Number((await db.query('SELECT parent_id FROM places WHERE id = $1', [home])).rows[0]!.parent_id)
+  const world = Number((await db.query('SELECT parent_id FROM places WHERE id = $1', [continent])).rows[0]!.parent_id)
   // The square, a feed room and a side room below it, a room below the side room and a
   // corner below that: two levels and more under the square.
   const square = await room(continent, 'Reading Square')
@@ -159,7 +160,7 @@ async function seedRoomReads(): Promise<Fixture> {
   ]
   for (const [kind, detail, when] of details) await event(kind, detail, 'ending-maker', when)
   return Object.freeze({
-    continent, home, square, side, below, corner, feedBelow, small, things, notes, lineId,
+    world, continent, home, square, side, below, corner, feedBelow, small, things, notes, lineId,
     dueLamp: five.things.due,
   })
 }
@@ -172,14 +173,17 @@ function shapes(fixture: Fixture, ids: readonly number[]): ReadonlyArray<readonl
   const early = at(1 / 5)
   const late = at(4 / 5)
   // Every shape for the square and the side room (rooms below both); the main shapes for
-  // a room below, the feed room, rooms elsewhere and a room that does not exist.
+  // a room below, the feed room, rooms elsewhere and a room that does not exist; and the
+  // big rooms, the continent and the world, with the kinds they hold.
   const full = [fixture.square, fixture.side]
-  const rooms = [...full, fixture.below, fixture.feedBelow, fixture.home, fixture.small, 2_000_000_001]
+  const big = [fixture.continent, fixture.world]
+  const rooms = [...full, ...big, fixture.below, fixture.feedBelow, fixture.home, fixture.small, 2_000_000_001]
   const out: Array<readonly [string, PublicEventFilters, PublicPage]> = []
   for (const placeId of rooms) {
     const every = full.includes(placeId)
+    const kinds = every ? [null, 'action', 'note'] : big.includes(placeId) ? [null, 'action', 'note', 'rare_kind'] : [null, 'note']
     for (const includeDescendants of [false, true]) {
-      for (const kind of every ? [null, 'action', 'note'] : [null, 'note']) {
+      for (const kind of kinds) {
         const filters = { ...base, placeId, includeDescendants, kind }
         const name = `${includeDescendants ? 'within_place_id' : 'place_id'}=${placeId} kind=${kind}`
         out.push([name, filters, pageOf(null, 50)])
@@ -193,6 +197,18 @@ function shapes(fixture: Fixture, ids: readonly number[]): ReadonlyArray<readonl
     }
   }
   return out
+}
+
+// The statement picks, per read with a kind, between each room key's own lookup and one
+// pass over the events of that kind (ROOM_KEYS_KIND_RATIO in src/public-pagination.ts).
+// Both ways must answer as today, so a read with a kind also runs with each way forced.
+const RATIO_MARKER = /\/\* room keys kind ratio \*\/ [0-9]+/u
+const forcedWays = (text: string): readonly Readonly<{ way: string; text: string }>[] => {
+  assert.match(text, RATIO_MARKER, 'a room read states its kind ratio')
+  return [
+    { way: 'each key', text: text.replace(RATIO_MARKER, '0') },
+    { way: 'the kind', text: text.replace(RATIO_MARKER, '1000000000') },
+  ]
 }
 
 /** Today's statement and the room keys statement, side by side, at the same moment. */
@@ -214,6 +230,14 @@ async function assertSameAsToday(fixture: Fixture, moment: string): Promise<numb
     const now = await raw(sent[0]!.text, sent[0]!.params)
     assert.deepEqual(now, today, `${moment}: ${name} answers as today`)
     assert.deepEqual(await raw(sent[1]!.text, sent[1]!.params), todayFurther, `${moment}: ${name} further page answers as today`)
+    if (filters.kind != null) {
+      for (const { way, text } of forcedWays(sent[0]!.text)) {
+        assert.deepEqual(await raw(text, sent[0]!.params), today, `${moment}: ${name} through ${way} answers as today`)
+      }
+      for (const { way, text } of forcedWays(sent[1]!.text)) {
+        assert.deepEqual(await raw(text, sent[1]!.params), todayFurther, `${moment}: ${name} further page through ${way} answers as today`)
+      }
+    }
     assert.equal(counted.total.items, Number(today[0]!.total_items))
     assert.equal(further.length, todayFurther.filter(row => row.id != null).length)
     matched += now.filter(row => row.id != null).length
@@ -348,7 +372,7 @@ test('one room events reads through the room keys index, against PostgreSQL', { 
         /does not match the reviewed function body/u)
     })
 
-    await t.test('a busy room read reaches events only through the room keys index and by id', async () => {
+    await t.test('a busy room read looks up each room key, a big room read with a kind reads that kind', async () => {
       await db.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public')
       await db.query(schemaDdl)
       await db.query(`INSERT INTO residents (id, handle, model, secret_hash) VALUES
@@ -359,12 +383,21 @@ test('one room events reads through the room keys index, against PostgreSQL', { 
         VALUES ($1, 'continent', 'Seeded Continent', 'seeded land', 1) RETURNING id`, [worldId])
       const rooms = await seedRoomEventsBenchmark(db, 50_000, continent)
       const base: PublicEventFilters = { kind: null, actor: null, placeId: null, includeDescendants: false, withinSeconds: null, afterId: null }
-      for (const filters of [
-        { ...base, placeId: rooms.squareId, includeDescendants: true },
-        { ...base, placeId: rooms.squareId },
-        { ...base, placeId: rooms.squareId, includeDescendants: true, kind: 'note' },
-        { ...base, placeId: rooms.smallRoomId, kind: 'action' },
-      ] satisfies PublicEventFilters[]) {
+      // Each key while the room's keys are few beside the events of the read's kind; one
+      // pass over that kind once the room holds so much of the city (the continent, the
+      // world) or the kind is so rare that a lookup per key would cost more.
+      const cases: ReadonlyArray<readonly ['each key' | 'the kind', PublicEventFilters]> = [
+        ['each key', { ...base, placeId: rooms.squareId, includeDescendants: true }],
+        ['each key', { ...base, placeId: rooms.squareId }],
+        ['each key', { ...base, placeId: rooms.smallRoomId, kind: 'action' }],
+        ['each key', { ...base, placeId: continent, includeDescendants: true }],
+        ['the kind', { ...base, placeId: continent, includeDescendants: true, kind: 'note' }],
+        ['the kind', { ...base, placeId: continent, includeDescendants: true, kind: 'rare_kind_25' }],
+        ['the kind', { ...base, placeId: worldId, includeDescendants: true, kind: 'note' }],
+        ['the kind', { ...base, placeId: worldId, includeDescendants: true, kind: 'action' }],
+        ['the kind', { ...base, placeId: rooms.squareId, includeDescendants: true, kind: 'rare_kind_25' }],
+      ]
+      for (const [way, filters] of cases) {
         for (const load of [loadPublicEventCollectionRows, loadPublicEventPageRows]) {
           let sent: Readonly<{ text: string; params: readonly unknown[] }> | null = null
           await load(async (text, params) => { sent = { text, params }; return [] },
@@ -374,25 +407,43 @@ test('one room events reads through the room keys index, against PostgreSQL', { 
           // As the route sends it: budgeted, in a read-only transaction, parallel workers off.
           const client = await db.connect()
           let plan: unknown
+          let answer: readonly Row[]
           try {
             await client.query('BEGIN READ ONLY')
             await client.query('SET LOCAL max_parallel_workers_per_gather = 0')
-            plan = (await client.query(`EXPLAIN (FORMAT JSON) ${budgetedExactStatement(text)}`, [...params])).rows[0]!['QUERY PLAN']
+            plan = (await client.query(`EXPLAIN (ANALYZE, FORMAT JSON) ${budgetedExactStatement(text)}`, [...params])).rows[0]!['QUERY PLAN']
+            answer = (await client.query(text, [...params])).rows
           } finally {
             await client.query('ROLLBACK')
             client.release()
           }
-          const eventScans: string[] = []
+          const mode = filters.includeDescendants ? 'within' : 'exact'
+          const counted = load === loadPublicEventCollectionRows
+          const name = `${load.name} ${JSON.stringify(filters)}`
+          assert.deepEqual(answer, await raw(oracle.statements[`${mode}${counted ? 'Counted' : 'Uncounted'}`]!, params),
+            `${name} answers as today`)
+          // Only the events scans that ran: a branch the read did not take has no loops.
+          const ran: string[] = []
           const walk = (node: Record<string, unknown>) => {
-            if (node['Relation Name'] === 'events') eventScans.push(`${node['Node Type']} ${node['Index Name'] ?? ''}`.trim())
+            const index = String(node['Index Name'] ?? '')
+            if ((node['Relation Name'] === 'events' || index.startsWith('events_')) && Number(node['Actual Loops']) > 0) {
+              ran.push(`${node['Node Type']} ${index}`.trim())
+            }
             for (const child of (node.Plans as Record<string, unknown>[] | undefined) ?? []) walk(child)
           }
           walk((plan as Array<{ Plan: Record<string, unknown> }>)[0]!.Plan)
-          const name = `${load.name} ${JSON.stringify(filters)}`
-          assert.ok(eventScans.includes('Bitmap Heap Scan'), `${name} finds candidates through the index: ${eventScans}`)
-          assert.ok(eventScans.every(scan => ['Bitmap Heap Scan', 'Index Scan events_pkey'].includes(scan)),
-            `${name} never scans events another way: ${eventScans}`)
-          assert.match(JSON.stringify(plan), /"Index Name":"events_room_keys"/u)
+          // The choice itself counts at most the ratio times the room's keys of the kind.
+          const reads = ran.filter(scan => !/^Index Only Scan events_kind/u.test(scan))
+          if (way === 'each key') {
+            assert.ok(reads.includes('Bitmap Index Scan events_room_keys'), `${name} looks up each room key: ${ran}`)
+            assert.ok(reads.every(scan => ['Bitmap Heap Scan', 'Bitmap Index Scan events_room_keys', 'Index Scan events_pkey'].includes(scan)),
+              `${name} never scans events another way: ${ran}`)
+          } else {
+            assert.ok(!ran.some(scan => scan.includes('events_room_keys')), `${name} never looks up each key: ${ran}`)
+            // Through events_kind, or one sequential pass when the kind is most of the city
+            // (as today's statement reads it too).
+            assert.ok(reads.some(scan => /events_kind|^Seq Scan$/u.test(scan)), `${name} reads the kind's events: ${ran}`)
+          }
         }
       }
     })
