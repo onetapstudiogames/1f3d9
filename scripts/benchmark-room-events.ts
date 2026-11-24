@@ -99,6 +99,21 @@ async function timedRuns(client: PoolClient, statement: Statement, options: Opti
   })
 }
 
+// Both statements' answers in one read-only transaction, so a time window ends at the same
+// moment for both (the seeded events are 15 s apart up to now).
+async function sameMomentAnswers(client: PoolClient, first: Statement, second: Statement): Promise<readonly [string, string]> {
+  await client.query('BEGIN READ ONLY')
+  try {
+    await client.query("SET LOCAL statement_timeout = '30s'")
+    await client.query('SET LOCAL max_parallel_workers_per_gather = 0')
+    await client.query('SET LOCAL jit = off')
+    const answer = async (statement: Statement) => JSON.stringify((await client.query(statement.text, [...statement.params])).rows)
+    return [await answer(first), await answer(second)]
+  } finally {
+    await client.query('ROLLBACK')
+  }
+}
+
 async function indexFacts(pool: Pool) {
   return (await pool.query(`SELECT pg_relation_size('public.events_room_keys')::bigint AS index_bytes,
     pg_relation_size('public.events')::bigint AS events_bytes, index.indisvalid AS valid, index.indisready AS ready
@@ -149,19 +164,29 @@ async function runSize(pool: Pool, events: number, options: Options) {
     ['square place_id kind=action', { ...square, kind: 'action' }, page()],
     ['square within_place_id before_id', within, page(squareIds[199]!)],
     ['square within_place_id after_id', { ...within, afterId: squareIds[399]! }, page()],
-    ['square within_place_id within_seconds=3600', { ...within, withinSeconds: 3600 }, page()],
+    ['square within_place_id within_seconds=1800', { ...within, withinSeconds: 1800 }, page()],
+    ['square within_place_id actor=quiet-reader', { ...within, actor: 'quiet-reader' }, page()],
+    ['square within_place_id actor=founder', { ...within, actor: 'founder' }, page()],
     ['square within_place_id limit=200', within, page(null, 200)],
     ['small place_id', small, page()],
     ['small within_place_id', { ...small, includeDescendants: true }, page()],
     ['small place_id kind=note', { ...small, kind: 'note' }, page()],
+    ['small place_id actor=grower', { ...small, actor: 'grower' }, page()],
+    ['small place_id within_seconds=1800', { ...small, withinSeconds: 1800 }, page()],
     ['square within_place_id kind=rare_kind_25', { ...within, kind: 'rare_kind_25' }, page()],
     ['continent within_place_id', continent, page()],
     ['continent within_place_id kind=note', { ...continent, kind: 'note' }, page()],
     ['continent within_place_id kind=action', { ...continent, kind: 'action' }, page()],
     ['continent within_place_id kind=rare_kind_25', { ...continent, kind: 'rare_kind_25' }, page()],
+    ['continent within_place_id actor=quiet-reader', { ...continent, actor: 'quiet-reader' }, page()],
+    ['continent within_place_id within_seconds=1800', { ...continent, withinSeconds: 1800 }, page()],
     ['world within_place_id', world, page()],
     ['world within_place_id kind=note', { ...world, kind: 'note' }, page()],
     ['world within_place_id kind=rare_kind_25', { ...world, kind: 'rare_kind_25' }, page()],
+    ['world within_place_id actor=quiet-reader', { ...world, actor: 'quiet-reader' }, page()],
+    ['world within_place_id within_seconds=1800', { ...world, withinSeconds: 1800 }, page()],
+    ['world within_place_id within_seconds=60', { ...world, withinSeconds: 60 }, page()],
+    ['world within_place_id actor=founder within_seconds=1800', { ...world, actor: 'founder', withinSeconds: 1800 }, page()],
   ]
   const oracleText = (filters: PublicEventFilters) => oracle.statements[filters.includeDescendants ? 'withinCounted' : 'exactCounted']!
   const client = await pool.connect()
@@ -172,7 +197,8 @@ async function runSize(pool: Pool, events: number, options: Options) {
       const before = { text: oracleText(filters), params: after.params }
       const beforeRuns = await timedRuns(client, before, options, true, '30s')
       const afterRuns = await timedRuns(client, after, options, true, '30s')
-      assert.equal(afterRuns.answer, beforeRuns.answer, `${name}: the room read must answer exactly as today`)
+      const [afterAnswer, beforeAnswer] = await sameMomentAnswers(client, after, before)
+      assert.equal(afterAnswer, beforeAnswer, `${name}: the room read must answer exactly as today`)
       const brief = ({ plan: _plan, answer: _answer, ...rest }: typeof beforeRuns) => rest
       results[name] = {
         sameAnswer: true, before: brief(beforeRuns), after: brief(afterRuns),

@@ -76,6 +76,20 @@ test('a one room read keeps today\'s filter word for word and adds only the room
       assert.match(statement, includeDescendants ? /WITH RECURSIVE selected_places AS/u : /\(VALUES \(\$3::integer\)\) room\(id\)/u)
     }
   }
+  // A kind, an actor or a window may each be the cheaper way to start: the pass over the
+  // events they allow uses today's comparisons for all three, and the read with none of
+  // them always looks up each key.
+  for (const filters of [{ ...base, placeId: 3, actor: 'founder' }, { ...base, placeId: 3, includeDescendants: true, withinSeconds: 1800 }]) {
+    const statement = await sent(query => loadPublicEventCollectionRows(query, filters, page))
+    assert.match(statement, /SELECT \(\$1::text IS NULL AND \$2::text IS NULL AND \$6::integer IS NULL\) OR \(/u)
+    for (const alias of ['narrow_count', 'pass_event']) {
+      assert.ok(statement.includes(`($1::text IS NULL OR ${alias}.kind = $1::text)
+             AND ($2::text IS NULL OR ${alias}.actor = $2::text)
+             AND ($6::integer IS NULL OR ${alias}.at >= transaction_timestamp()
+               - ($6::integer * INTERVAL '1 second'))`), `${alias} allows the kind, actor and window as today's filter does`)
+    }
+    assert.match(statement, /\/\* room keys pass ratio \*\/ 32 AS events/u)
+  }
   // The kept count never answers a room read: it sends nothing and the caller counts.
   let keptSent = 0
   assert.equal(await loadPublicEventKeptCollectionRows(async () => { keptSent += 1; return [] },
@@ -148,12 +162,21 @@ test('the index is built only over the reviewed function and repaired only when 
   }
 })
 
-test('the production room keys check takes only a phase, up to twenty room ids and up to five kinds', async () => {
+test('the production room keys check takes only a phase, up to twenty room ids, five kinds, five actors and a window', async () => {
   const { parseRoomKeysCheckArgs } = await import('../scripts/check-room-events-keys.ts')
-  assert.deepEqual(parseRoomKeysCheckArgs(['--phase', 'function']), { phase: 'function', rooms: [3], kinds: [] })
-  assert.deepEqual(parseRoomKeysCheckArgs(['--phase', 'index', '--rooms', '3,1093']), { phase: 'index', rooms: [3, 1093], kinds: [] })
+  const none = { kinds: [], actors: [], withinSeconds: null }
+  assert.deepEqual(parseRoomKeysCheckArgs(['--phase', 'function']), { phase: 'function', rooms: [3], ...none })
+  assert.deepEqual(parseRoomKeysCheckArgs(['--phase', 'index', '--rooms', '3,1093']), { phase: 'index', rooms: [3, 1093], ...none })
   assert.deepEqual(parseRoomKeysCheckArgs(['--phase', 'index', '--rooms', '1', '--kinds', 'note,thing_moved']),
-    { phase: 'index', rooms: [1], kinds: ['note', 'thing_moved'] })
+    { phase: 'index', rooms: [1], ...none, kinds: ['note', 'thing_moved'] })
+  assert.deepEqual(parseRoomKeysCheckArgs(['--phase', 'index', '--actors', 'founder,quiet-reader', '--within-seconds', '1800']),
+    { phase: 'index', rooms: [3], kinds: [], actors: ['founder', 'quiet-reader'], withinSeconds: 1800 })
+  for (const actors of ['', 'Founder', 'ab', 'founder,', "founder';--", 'a1a,b1b,c1c,d1d,e1e,f1f', 'x'.repeat(33)]) {
+    assert.throws(() => parseRoomKeysCheckArgs(['--phase', 'index', '--actors', actors]), /--actors lists 1 to 5 resident handles/u)
+  }
+  for (const within of ['', '0', '1801', '60.5', '-1', '1e3', 'x']) {
+    assert.throws(() => parseRoomKeysCheckArgs(['--phase', 'index', '--within-seconds', within]), /--within-seconds is from 1 to 1800/u)
+  }
   for (const kinds of ['', 'Note', 'note,', "note';--", 'a,b,c,d,e,f', 'x'.repeat(65)]) {
     assert.throws(() => parseRoomKeysCheckArgs(['--phase', 'index', '--kinds', kinds]), /--kinds lists 1 to 5 event kinds/u)
   }

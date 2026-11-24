@@ -116,6 +116,29 @@ export async function seedRoomEventsBenchmark(pool: Pool, events: number, contin
     smallDone = smallUpTo
   }
   await pool.query('ALTER TABLE events ENABLE TRIGGER events_stamp_public_activity')
+  await spreadEventTimes(pool)
   await pool.query('VACUUM ANALYZE')
   return rooms
+}
+
+// Seconds between two seeded events: 450,000 events cover about 78 days, as the live list's do.
+const SECONDS_BETWEEN_EVENTS = 15
+// About one event in this many is a quiet resident's (about 600 in 450,000).
+const QUIET_READER_SHARE = 750
+
+/**
+ * Every seeded event is inserted at the same moment, so a within_seconds read would cover
+ * the whole history. This spreads the times out, oldest first, SECONDS_BETWEEN_EVENTS
+ * apart and the newest now, and gives about one event in QUIET_READER_SHARE to a quiet
+ * resident, 'quiet-reader', so an actor read has a small history beside a big room's. Events
+ * never change in the city, so the history guard is off only for this one statement, and
+ * the table is rewritten after it so no dead rows are left for either statement to step over.
+ */
+async function spreadEventTimes(pool: Pool): Promise<void> {
+  await pool.query('ALTER TABLE events DISABLE TRIGGER events_append_only')
+  await pool.query(`UPDATE events SET
+      at = now() - ((SELECT max(id) FROM events) - id) * (${SECONDS_BETWEEN_EVENTS} * INTERVAL '1 second'),
+      actor = CASE WHEN (hashtext('quiet ' || id::text) & 2147483647) % ${QUIET_READER_SHARE} = 0 THEN 'quiet-reader' ELSE actor END`)
+  await pool.query('ALTER TABLE events ENABLE TRIGGER events_append_only')
+  await pool.query('VACUUM FULL events')
 }

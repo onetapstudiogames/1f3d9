@@ -190,24 +190,33 @@ function shapes(fixture: Fixture, ids: readonly number[]): ReadonlyArray<readonl
         out.push([`${name} limit=2`, filters, pageOf(null, 2)])
         out.push([`${name} before_id`, filters, pageOf(middle, 50)])
         out.push([`${name} after_id before_id`, { ...filters, afterId: early }, pageOf(late, 3)])
+        if (every || big.includes(placeId)) {
+          // An actor or a time window, alone or with a kind: one of them can be the cheaper
+          // way to start, so each also runs with each way forced.
+          out.push([`${name} within_seconds`, { ...filters, withinSeconds: 3600 }, pageOf(null, 50)])
+          out.push([`${name} within_seconds before_id`, { ...filters, withinSeconds: 3600 }, pageOf(middle, 50)])
+          out.push([`${name} actor`, { ...filters, actor: 'ending-maker' }, pageOf(null, 50)])
+          out.push([`${name} rare actor`, { ...filters, actor: 'the city' }, pageOf(null, 50)])
+          out.push([`${name} rare actor within_seconds`, { ...filters, actor: 'the city', withinSeconds: 3600 }, pageOf(null, 50)])
+        }
         if (!every) continue
         out.push([`${name} after_id`, { ...filters, afterId: early }, pageOf(null, 50)])
-        out.push([`${name} within_seconds`, { ...filters, withinSeconds: 3600 }, pageOf(null, 50)])
       }
     }
   }
   return out
 }
 
-// The statement picks, per read with a kind, between each room key's own lookup and one
-// pass over the events of that kind (ROOM_KEYS_KIND_RATIO in src/public-pagination.ts).
-// Both ways must answer as today, so a read with a kind also runs with each way forced.
-const RATIO_MARKER = /\/\* room keys kind ratio \*\/ [0-9]+/u
+// The statement picks, per read with a kind, an actor or a time window, between each room
+// key's own lookup and one pass over the events those allow (ROOM_KEYS_PASS_RATIO in
+// src/public-pagination.ts). Both ways must answer as today, so such a read also runs with
+// each way forced.
+const RATIO_MARKER = /\/\* room keys pass ratio \*\/ [0-9]+/u
 const forcedWays = (text: string): readonly Readonly<{ way: string; text: string }>[] => {
-  assert.match(text, RATIO_MARKER, 'a room read states its kind ratio')
+  assert.match(text, RATIO_MARKER, 'a room read states its pass ratio')
   return [
     { way: 'each key', text: text.replace(RATIO_MARKER, '0') },
-    { way: 'the kind', text: text.replace(RATIO_MARKER, '1000000000') },
+    { way: 'one pass', text: text.replace(RATIO_MARKER, '1000000000') },
   ]
 }
 
@@ -230,7 +239,7 @@ async function assertSameAsToday(fixture: Fixture, moment: string): Promise<numb
     const now = await raw(sent[0]!.text, sent[0]!.params)
     assert.deepEqual(now, today, `${moment}: ${name} answers as today`)
     assert.deepEqual(await raw(sent[1]!.text, sent[1]!.params), todayFurther, `${moment}: ${name} further page answers as today`)
-    if (filters.kind != null) {
+    if (filters.kind != null || filters.actor != null || filters.withinSeconds != null) {
       for (const { way, text } of forcedWays(sent[0]!.text)) {
         assert.deepEqual(await raw(text, sent[0]!.params), today, `${moment}: ${name} through ${way} answers as today`)
       }
@@ -372,7 +381,7 @@ test('one room events reads through the room keys index, against PostgreSQL', { 
         /does not match the reviewed function body/u)
     })
 
-    await t.test('a busy room read looks up each room key, a big room read with a kind reads that kind', async () => {
+    await t.test('a busy room read looks up each room key, a big room read with a kind, an actor or a time window reads those events', async () => {
       await db.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public')
       await db.query(schemaDdl)
       await db.query(`INSERT INTO residents (id, handle, model, secret_hash) VALUES
@@ -383,20 +392,35 @@ test('one room events reads through the room keys index, against PostgreSQL', { 
         VALUES ($1, 'continent', 'Seeded Continent', 'seeded land', 1) RETURNING id`, [worldId])
       const rooms = await seedRoomEventsBenchmark(db, 50_000, continent)
       const base: PublicEventFilters = { kind: null, actor: null, placeId: null, includeDescendants: false, withinSeconds: null, afterId: null }
-      // Each key while the room's keys are few beside the events of the read's kind; one
-      // pass over that kind once the room holds so much of the city (the continent, the
-      // world) or the kind is so rare that a lookup per key would cost more.
-      const cases: ReadonlyArray<readonly ['each key' | 'the kind', PublicEventFilters]> = [
+      // Each key while the room's keys are few beside the events the read's kind, actor and
+      // time window allow; one pass over those events once the room holds so much of the
+      // city (the continent, the world) or they are so few that a lookup per key would cost
+      // more. The seed spreads event times about 15 s apart and gives about one event in 750
+      // to 'quiet-reader', so a 30 minute window and that actor are small slices of the city.
+      const cases: ReadonlyArray<readonly ['each key' | 'one pass', PublicEventFilters]> = [
         ['each key', { ...base, placeId: rooms.squareId, includeDescendants: true }],
         ['each key', { ...base, placeId: rooms.squareId }],
         ['each key', { ...base, placeId: rooms.smallRoomId, kind: 'action' }],
         ['each key', { ...base, placeId: continent, includeDescendants: true }],
-        ['the kind', { ...base, placeId: continent, includeDescendants: true, kind: 'note' }],
-        ['the kind', { ...base, placeId: continent, includeDescendants: true, kind: 'rare_kind_25' }],
-        ['the kind', { ...base, placeId: worldId, includeDescendants: true, kind: 'note' }],
-        ['the kind', { ...base, placeId: worldId, includeDescendants: true, kind: 'action' }],
-        ['the kind', { ...base, placeId: rooms.squareId, includeDescendants: true, kind: 'rare_kind_25' }],
+        ['each key', { ...base, placeId: rooms.smallRoomId, actor: 'grower' }],
+        ['one pass', { ...base, placeId: continent, includeDescendants: true, kind: 'note' }],
+        ['one pass', { ...base, placeId: continent, includeDescendants: true, kind: 'rare_kind_25' }],
+        ['one pass', { ...base, placeId: worldId, includeDescendants: true, kind: 'note' }],
+        ['one pass', { ...base, placeId: worldId, includeDescendants: true, kind: 'action' }],
+        ['one pass', { ...base, placeId: rooms.squareId, includeDescendants: true, kind: 'rare_kind_25' }],
+        ['one pass', { ...base, placeId: continent, includeDescendants: true, actor: 'quiet-reader' }],
+        ['one pass', { ...base, placeId: worldId, includeDescendants: true, actor: 'quiet-reader' }],
+        ['one pass', { ...base, placeId: continent, includeDescendants: true, withinSeconds: 1800 }],
+        ['one pass', { ...base, placeId: worldId, includeDescendants: true, withinSeconds: 1800 }],
+        ['one pass', { ...base, placeId: worldId, includeDescendants: true, withinSeconds: 60 }],
+        ['one pass', { ...base, placeId: rooms.squareId, includeDescendants: true, withinSeconds: 1800 }],
+        ['one pass', { ...base, placeId: worldId, includeDescendants: true, actor: 'founder', withinSeconds: 1800 }],
       ]
+      const slices = (await db.query(`SELECT count(*) FILTER (WHERE at >= now() - interval '1800 seconds')::integer AS recent,
+          count(*) FILTER (WHERE actor = 'quiet-reader')::integer AS quiet
+        FROM events`)).rows[0]!
+      assert.ok(slices.quiet > 20 && slices.quiet < 200, `the seed's quiet actor has a small history: ${slices.quiet}`)
+      assert.ok(slices.recent > 20 && slices.recent < 500, `a 30 minute window holds few events: ${slices.recent}`)
       for (const [way, filters] of cases) {
         for (const load of [loadPublicEventCollectionRows, loadPublicEventPageRows]) {
           let sent: Readonly<{ text: string; params: readonly unknown[] }> | null = null
@@ -405,44 +429,54 @@ test('one room events reads through the room keys index, against PostgreSQL', { 
           assert.ok(sent)
           const { text, params } = sent as Readonly<{ text: string; params: readonly unknown[] }>
           // As the route sends it: budgeted, in a read-only transaction, parallel workers off.
+          // Today's statement runs in the same transaction, so a time window ends at the
+          // same moment for both (the seeded events are 15 s apart up to now).
+          const mode = filters.includeDescendants ? 'within' : 'exact'
+          const counted = load === loadPublicEventCollectionRows
+          const name = `${load.name} ${JSON.stringify(filters)}`
           const client = await db.connect()
           let plan: unknown
           let answer: readonly Row[]
+          let today: readonly Row[]
           try {
             await client.query('BEGIN READ ONLY')
             await client.query('SET LOCAL max_parallel_workers_per_gather = 0')
             plan = (await client.query(`EXPLAIN (ANALYZE, FORMAT JSON) ${budgetedExactStatement(text)}`, [...params])).rows[0]!['QUERY PLAN']
             answer = (await client.query(text, [...params])).rows
+            today = (await client.query(oracle.statements[`${mode}${counted ? 'Counted' : 'Uncounted'}`]!, [...params])).rows
           } finally {
             await client.query('ROLLBACK')
             client.release()
           }
-          const mode = filters.includeDescendants ? 'within' : 'exact'
-          const counted = load === loadPublicEventCollectionRows
-          const name = `${load.name} ${JSON.stringify(filters)}`
-          assert.deepEqual(answer, await raw(oracle.statements[`${mode}${counted ? 'Counted' : 'Uncounted'}`]!, params),
-            `${name} answers as today`)
+          assert.deepEqual(answer, today, `${name} answers as today`)
+          // A 60 s window may already be empty by the time it runs; the others hold rows.
+          if (filters.withinSeconds === 1800 || filters.actor === 'quiet-reader') {
+            assert.ok(counted ? Number(answer[0]!.total_items) > 0 : answer.some(row => row.id != null), `${name} keeps real rows`)
+          }
           // Only the events scans that ran: a branch the read did not take has no loops.
-          const ran: string[] = []
+          // The choice itself (alias narrow_count) counts at most the ratio times the room's
+          // keys of the events the kind, actor and window allow, and is left out here.
+          const reads: string[] = []
           const walk = (node: Record<string, unknown>) => {
             const index = String(node['Index Name'] ?? '')
-            if ((node['Relation Name'] === 'events' || index.startsWith('events_')) && Number(node['Actual Loops']) > 0) {
-              ran.push(`${node['Node Type']} ${index}`.trim())
+            if ((node['Relation Name'] === 'events' || index.startsWith('events_')) && Number(node['Actual Loops']) > 0
+              && node.Alias !== 'narrow_count') {
+              reads.push(`${node['Node Type']} ${index}`.trim())
             }
             for (const child of (node.Plans as Record<string, unknown>[] | undefined) ?? []) walk(child)
           }
           walk((plan as Array<{ Plan: Record<string, unknown> }>)[0]!.Plan)
-          // The choice itself counts at most the ratio times the room's keys of the kind.
-          const reads = ran.filter(scan => !/^Index Only Scan events_kind/u.test(scan))
+          const ran = reads
           if (way === 'each key') {
             assert.ok(reads.includes('Bitmap Index Scan events_room_keys'), `${name} looks up each room key: ${ran}`)
             assert.ok(reads.every(scan => ['Bitmap Heap Scan', 'Bitmap Index Scan events_room_keys', 'Index Scan events_pkey'].includes(scan)),
               `${name} never scans events another way: ${ran}`)
           } else {
             assert.ok(!ran.some(scan => scan.includes('events_room_keys')), `${name} never looks up each key: ${ran}`)
-            // Through events_kind, or one sequential pass when the kind is most of the city
-            // (as today's statement reads it too).
-            assert.ok(reads.some(scan => /events_kind|^Seq Scan$/u.test(scan)), `${name} reads the kind's events: ${ran}`)
+            // Through events_kind, events_actor_at_desc or events_at, or one sequential pass
+            // when the kind is most of the city (as today's statement reads them too).
+            assert.ok(reads.some(scan => /events_kind|events_actor_at_desc|events_at|^Seq Scan$/u.test(scan)),
+              `${name} reads the kind's, actor's or window's events: ${ran}`)
           }
         }
       }
