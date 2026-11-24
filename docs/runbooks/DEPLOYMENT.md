@@ -1630,6 +1630,45 @@ checks so their names match a fresh install. All six changes share one two-secon
 statement limit, with one second per lock attempt. A timeout rolls back the whole
 change. A repeat verifies the installed checks without changing them.
 
+### Room events keys prerequisite
+
+One room's events read (`GET /api/events` with `place_id` or `within_place_id`) calls
+`public.event_room_keys(detail)` and finds its events through the GIN index
+`events_room_keys`. Both migrations run, in this order, before the merge: the new code
+refuses room reads on a database without the function, and is only slower (never wrong)
+on one without a valid index. Today's code uses neither, so running them first changes
+nothing it does; each new event pays one small extra index insert.
+
+1. `npm run migrate:preview:event-room-keys-function`, then
+   `npm run migrate:preview:events-room-keys-index`, on the PR's Preview branch and the
+   shared Preview branch; repeat both on each. The function migration refuses to run again
+   once the index exists (the key function is never edited in place); the index migration
+   keeps a valid exact index and rebuilds only one left invalid by a failed build.
+2. Production, from a fresh clone of the reviewed head, with
+   `PRODUCTION_SNAPSHOT_NAME=pre-room-events-keys-<date>`:
+   `npm run migrate:production:event-room-keys-function`; then the function check below;
+   then `npm run migrate:production:events-room-keys-index`; then the index check below.
+3. The checks are read-only (`BEGIN READ ONLY`, 30 s statement limit, parallel workers
+   off) and take the connection string from `ROOM_KEYS_CHECK_DATABASE_URL` in that
+   process only:
+   `node --experimental-strip-types scripts/check-room-events-keys.ts --phase function`
+   proves the installed function is the reviewed one and computes it over every stored
+   event without a refusal (so the build and later inserts cannot fail on any stored
+   shape); `--phase index --rooms 3,<more>` proves the index is the reviewed one, valid
+   and ready, and that for each room the new statement's rows and totals equal today's
+   statement's, with its time and whether it used the index.
+
+```sql
+SELECT p.provolatile, p.proparallel, p.proisstrict, md5(p.prosrc) AS body_md5
+FROM pg_proc p WHERE p.oid = to_regprocedure('public.event_room_keys(jsonb)');
+SELECT i.indisvalid, i.indisready, pg_get_indexdef(i.indexrelid),
+  pg_relation_size(i.indexrelid) AS bytes
+FROM pg_index i WHERE i.indexrelid = to_regclass('public.events_room_keys');
+```
+
+Rollback before the merge only: `DROP INDEX CONCURRENTLY public.events_room_keys;` then
+`DROP FUNCTION public.event_room_keys(jsonb);`. After the merge, revert the code first.
+
 ### When a migration times out
 
 Normal migrations run inside one transaction that the runner starts with
