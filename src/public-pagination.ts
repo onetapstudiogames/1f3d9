@@ -436,23 +436,34 @@ const SELECTED_PLACES_SQL = `selected_places AS (
  * on its own, because one index lookup for a list of keys gets slower with every key
  * (a busy room has a key for each of its notes and things).
  *
- * A read with a kind can instead take one pass over the events of that kind, as today's
- * statement does through events_kind, and the statement picks the cheaper way when it
- * runs. A lookup per key costs about the room's own events; a pass over the kind costs
- * that kind's events in the whole city. So the keys win while the room is small beside
- * the kind, and the kind wins when the room holds much of the city (a continent, the
- * world) or the kind is rare. room_plan counts the kind's events, stopping at
- * ROOM_KEYS_KIND_RATIO times the room's keys, and takes each key only when the kind has
- * at least that many. Both ways keep exactly the events publicEventFilter keeps: the
- * filter runs on either way's candidates, and the way only changes how fast it answers.
+ * A read with a kind, an actor or a time window (within_seconds) can instead take one
+ * pass over the events those allow, as today's statement does through events_kind,
+ * events_actor_at_desc or events_at, and the statement picks the cheaper way when it
+ * runs. A lookup per key costs about the room's own events; one pass costs the events the
+ * kind, actor and window allow in the whole city. So the keys win while the room is small
+ * beside those, and the pass wins when the room holds much of the city (a continent, the
+ * world) or they are few (a rare kind, a quiet resident, the last half hour). room_plan
+ * counts them, stopping at ROOM_KEYS_PASS_RATIO times the room's keys, and takes each key
+ * only when there are at least that many. A read with none of the three always takes each
+ * key. Both ways keep exactly the events publicEventFilter keeps: the filter runs on
+ * either way's candidates, and the way only changes how fast it answers.
  *
  * room_events holds each kept event once, with its feed room, change id and text bytes;
  * the totals count it, and the page takes its newest rows before reading their details.
  */
-// About how many of a kind's events one room key's lookup is worth. Measured on the
+// About how many events of one pass one room key's lookup is worth. Measured on the
 // one-room benchmark (scripts/benchmark-room-events.ts): a square-sized room's lookups
 // cost about 25 to 40 kind events each, counting the events each key brings back.
-const ROOM_KEYS_KIND_RATIO = 32
+const ROOM_KEYS_PASS_RATIO = 32
+
+// The events a read's kind, actor and time window allow, by the same comparisons as
+// publicEventFilter; with none of the three, every event.
+function passEventsSql(alias: string): string {
+  return `($1::text IS NULL OR ${alias}.kind = $1::text)
+             AND ($2::text IS NULL OR ${alias}.actor = $2::text)
+             AND ($6::integer IS NULL OR ${alias}.at >= transaction_timestamp()
+               - ($6::integer * INTERVAL '1 second'))`
+}
 
 function roomEventsStatement(includeDescendants: boolean, totalsMode: EventTotals): string {
   const numericPlace = (field: string): string => numericPlaceSql(includeDescendants, field)
@@ -481,13 +492,15 @@ function roomEventsStatement(includeDescendants: boolean, totalsMode: EventTotal
                AND thing.withdrawn_at IS NULL))
        )::text[] AS keys
      ), room_plan AS MATERIALIZED (
-       SELECT $1::text IS NULL OR (
+       SELECT ($1::text IS NULL AND $2::text IS NULL AND $6::integer IS NULL) OR (
            SELECT count(*) FROM (
-             SELECT 1 FROM events kind_event WHERE kind_event.kind = $1::text LIMIT bound.events
-           ) kind_events
+             SELECT 1 FROM events narrow_count
+             WHERE ${passEventsSql('narrow_count')}
+             LIMIT bound.events
+           ) pass_events
          ) >= bound.events AS each_key
        FROM (
-         SELECT cardinality(room_keys.keys)::bigint * /* room keys kind ratio */ ${ROOM_KEYS_KIND_RATIO} AS events
+         SELECT cardinality(room_keys.keys)::bigint * /* room keys pass ratio */ ${ROOM_KEYS_PASS_RATIO} AS events
          FROM room_keys
        ) bound
      ), room_events AS MATERIALIZED (
@@ -504,13 +517,14 @@ function roomEventsStatement(includeDescendants: boolean, totalsMode: EventTotal
          ) candidate
          CROSS JOIN LATERAL (
            -- OFFSET 0 keeps this one lookup by id per candidate, so the filter below runs on
-           -- the candidates only and never on a scan of all events of one kind.
+           -- the candidates only and never on a scan of all events of one kind or actor.
            SELECT event.* FROM events event WHERE event.id = candidate.id OFFSET 0
          ) keyed_event
          WHERE (SELECT room_plan.each_key FROM room_plan)
          UNION ALL
-         SELECT kind_event.* FROM events kind_event
-         WHERE kind_event.kind = $1::text AND NOT (SELECT room_plan.each_key FROM room_plan)
+         SELECT pass_event.* FROM events pass_event
+         WHERE ${passEventsSql('pass_event')}
+           AND NOT (SELECT room_plan.each_key FROM room_plan)
        ) event
        ${PUBLIC_EVENT_FEED_ROOM_JOIN}
        LEFT JOIN public_change_log change ON change.event_id = event.id

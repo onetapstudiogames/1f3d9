@@ -10,10 +10,12 @@
 //                     ready, and for each room the new one-room statement answers exactly
 //                     as today's (frozen from main in test/helpers/room-events-oracle), with
 //                     the new statement's time and whether it looked up each room key (a
-//                     read with a kind on a big room reads that kind's events instead).
-//                     --kinds adds those kinds to each room's reads, with and without rooms
-//                     below; with no --kinds each room is read without a kind only.
-//   node --experimental-strip-types scripts/check-room-events-keys.ts --phase index --rooms 3,1093 --kinds note
+//                     read with a kind, an actor or a window on a big room reads the events
+//                     those allow instead). --kinds adds a read with each of those kinds,
+//                     --actors one with each of those residents, and --within-seconds one
+//                     with that window, to each room's reads, with and without rooms below;
+//                     with none of them each room is read without a filter only.
+//   node --experimental-strip-types scripts/check-room-events-keys.ts --phase index --rooms 3,1093 --kinds note --actors founder --within-seconds 1800
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
@@ -32,7 +34,9 @@ import {
 import type { PublicEventFilters, PublicPage } from '../src/public-pagination.ts'
 
 type Phase = 'function' | 'index'
-type Options = Readonly<{ phase: Phase; rooms: readonly number[]; kinds: readonly string[] }>
+type Options = Readonly<{
+  phase: Phase; rooms: readonly number[]; kinds: readonly string[]; actors: readonly string[]; withinSeconds: number | null
+}>
 
 export function parseRoomKeysCheckArgs(args: readonly string[]): Options {
   const value = (name: string): string | undefined => {
@@ -48,7 +52,15 @@ export function parseRoomKeysCheckArgs(args: readonly string[]): Options {
   const kinds = kindsArg === undefined ? [] : kindsArg.split(',')
   assert(kindsArg === undefined || (kinds.length >= 1 && kinds.length <= 5 && kinds.every(kind => /^[a-z][a-z0-9_]{0,63}$/u.test(kind))),
     '--kinds lists 1 to 5 event kinds')
-  return Object.freeze({ phase, rooms, kinds })
+  const actorsArg = value('actors')
+  const actors = actorsArg === undefined ? [] : actorsArg.split(',')
+  assert(actorsArg === undefined || (actors.length >= 1 && actors.length <= 5 && actors.every(actor => /^[a-z0-9][a-z0-9-]{2,31}$/u.test(actor))),
+    '--actors lists 1 to 5 resident handles')
+  const withinArg = value('within-seconds')
+  const withinSeconds = withinArg === undefined ? null : Number(withinArg)
+  assert(withinSeconds === null || (/^[0-9]{1,4}$/u.test(withinArg!) && withinSeconds >= 1 && withinSeconds <= 1800),
+    '--within-seconds is from 1 to 1800')
+  return Object.freeze({ phase, rooms, kinds, actors, withinSeconds })
 }
 
 async function readOnly<T>(client: Client, work: () => Promise<T>): Promise<T> {
@@ -78,7 +90,7 @@ async function checkFunction(client: Client): Promise<Record<string, unknown>> {
   })
 }
 
-async function checkIndex(client: Client, rooms: readonly number[], kinds: readonly string[]): Promise<Record<string, unknown>> {
+async function checkIndex(client: Client, options: Options): Promise<Record<string, unknown>> {
   const pagination = await import('../src/public-pagination.ts')
   const { budgetedExactStatement } = await import('../src/public-exact-query.ts')
   const oracle = (JSON.parse(await readFile(new URL('../test/helpers/room-events-oracle/main-af009f2.json', import.meta.url), 'utf8')) as
@@ -94,9 +106,16 @@ async function checkIndex(client: Client, rooms: readonly number[], kinds: reado
   })
   const page: PublicPage = Object.freeze({ ok: true, cursor: null, limit: 20, fetchLimit: 21 })
   const results: Record<string, unknown>[] = []
-  for (const placeId of rooms) {
-    for (const [includeDescendants, kind] of [false, true].flatMap(within => [null, ...kinds].map(kind => [within, kind] as const))) {
-      const filters: PublicEventFilters = { kind, actor: null, placeId, includeDescendants, withinSeconds: null, afterId: null }
+  // Each room is read with no filter, then with each kind, each actor and the window alone.
+  const narrowings: ReadonlyArray<Readonly<{ kind: string | null; actor: string | null; withinSeconds: number | null }>> = [
+    { kind: null, actor: null, withinSeconds: null },
+    ...options.kinds.map(kind => ({ kind, actor: null, withinSeconds: null })),
+    ...options.actors.map(actor => ({ kind: null, actor, withinSeconds: null })),
+    ...(options.withinSeconds === null ? [] : [{ kind: null, actor: null, withinSeconds: options.withinSeconds }]),
+  ]
+  for (const placeId of options.rooms) {
+    for (const [includeDescendants, narrowing] of [false, true].flatMap(within => narrowings.map(narrowing => [within, narrowing] as const))) {
+      const filters: PublicEventFilters = { ...narrowing, placeId, includeDescendants, afterId: null }
       let sent: Readonly<{ text: string; params: readonly unknown[] }> | null = null
       await pagination.loadPublicEventCollectionRows(async (text, params) => { sent = { text, params }; return [] }, filters, page)
         .catch(() => undefined)
@@ -111,7 +130,7 @@ async function checkIndex(client: Client, rooms: readonly number[], kinds: reado
           .map(row => String(row['QUERY PLAN']))
         const before = (await client.query(today, [...params])).rows
         return {
-          room: placeId, mode: includeDescendants ? 'within_place_id' : 'place_id', kind,
+          room: placeId, mode: includeDescendants ? 'within_place_id' : 'place_id', ...narrowing,
           same_answer: digest(now) === digest(before), total_items: now[0]?.total_items, returned: now.filter(row => row.id != null).length,
           ms, execution_ms: Number(plan.find(line => line.startsWith('Execution Time'))?.match(/[0-9.]+/u)?.[0]),
           // The way the read did not take shows in the plan as never executed.
@@ -131,7 +150,7 @@ async function main(): Promise<void> {
   const client = new Client({ connectionString: url })
   await client.connect()
   try {
-    const result = options.phase === 'function' ? await checkFunction(client) : await checkIndex(client, options.rooms, options.kinds)
+    const result = options.phase === 'function' ? await checkFunction(client) : await checkIndex(client, options)
     console.info(JSON.stringify({ phase: options.phase, at: new Date().toISOString(), ...result }, null, 1))
   } finally {
     await client.end()
