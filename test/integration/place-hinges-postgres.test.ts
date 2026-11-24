@@ -24,8 +24,10 @@ const WALKER = Object.freeze({ id: 3, handle: 'hinge-walker', secret: `1f3d9_sk_
 type CityApp = Readonly<{ request: (input: string, init?: RequestInit) => Response | Promise<Response> }>
 type Json = Record<string, unknown>
 
-function closedHingeRefusal(destinationId: number, currentPlaceId: number): string {
-  return `place_id ${destinationId} exists, but entry is closed from your current place_id ${currentPlaceId}; entry opens when you stand in its parent, one of its direct children, or a place with an open hinge to it, so use the public map outline to move one edge at a time`
+/** The refusal names the destination's parent only while that parent is public and active. */
+function closedHingeRefusal(destinationId: number, currentPlaceId: number, parentId: number | null): string {
+  const parent = parentId === null ? 'its parent' : `its parent, place_id ${parentId}`
+  return `place_id ${destinationId} exists, but entry is closed from your current place_id ${currentPlaceId}; entry opens when you stand in ${parent}, one of its direct children, or a place with an open hinge to it, so use the public map outline to move one edge at a time`
 }
 
 async function openHinge(eastRoomId: number, westRoomId: number): Promise<void> {
@@ -44,6 +46,27 @@ function walkTo(
     action: 'move',
     to_place_id: destinationId,
     ...(carryThingId === undefined ? {} : { carry_thing_id: carryThingId }),
+  })
+}
+
+async function mcpMove(
+  app: CityApp,
+  secret: string,
+  destinationId: number,
+): Promise<Readonly<{ isError: boolean; json: Json }>> {
+  const response = await app.request('http://city.test/mcp', {
+    method: 'POST',
+    headers: { ...bearer(secret), accept: 'application/json, text/event-stream' },
+    body: JSON.stringify({
+      jsonrpc: '2.0', id: 1, method: 'tools/call',
+      params: { name: 'act', arguments: { action: 'move', to_place_id: destinationId } },
+    }),
+  })
+  assert.equal(response.status, 200)
+  const payload = await response.json() as { result: { isError: boolean; content: Array<{ text: string }> } }
+  return Object.freeze({
+    isError: payload.result.isError,
+    json: JSON.parse(payload.result.content[0]!.text) as Json,
   })
 }
 
@@ -429,7 +452,7 @@ test('places keep owner-controlled hinges against real PostgreSQL', { timeout: 9
       await db.query('UPDATE places SET hinge_to = NULL WHERE id = $1', [rooms.westRoomId])
       const cleared = await walkTo(app, WALKER.secret, rooms.westRoomId)
       assert.equal(cleared.status, 403)
-      assert.equal(cleared.json.error, closedHingeRefusal(rooms.westRoomId, rooms.eastRoomId))
+      assert.equal(cleared.json.error, closedHingeRefusal(rooms.westRoomId, rooms.eastRoomId, rooms.continentId))
 
       await db.query('UPDATE places SET hinge_to = $1 WHERE id = $2', [rooms.eastRoomId, rooms.westRoomId])
       await db.query('UPDATE places SET retired_at = clock_timestamp() WHERE id = $1', [rooms.westRoomId])
@@ -440,7 +463,7 @@ test('places keep owner-controlled hinges against real PostgreSQL', { timeout: 9
       await db.query('UPDATE places SET retired_at = NULL WHERE id = $1', [rooms.westRoomId])
       const restoredClosed = await walkTo(app, WALKER.secret, rooms.westRoomId)
       assert.equal(restoredClosed.status, 403)
-      assert.equal(restoredClosed.json.error, closedHingeRefusal(rooms.westRoomId, rooms.eastRoomId))
+      assert.equal(restoredClosed.json.error, closedHingeRefusal(rooms.westRoomId, rooms.eastRoomId, rooms.continentId))
 
       await db.query('UPDATE places SET hinge_to = $1 WHERE id = $2', [rooms.eastRoomId, rooms.westRoomId])
       const reopened = await walkTo(app, WALKER.secret, rooms.westRoomId)
@@ -462,7 +485,7 @@ test('places keep owner-controlled hinges against real PostgreSQL', { timeout: 9
 
       const refused = await walkTo(app, WALKER.secret, rooms.westRoomId)
       assert.equal(refused.status, 403)
-      assert.equal(refused.json.error, closedHingeRefusal(rooms.westRoomId, rooms.eastRoomId))
+      assert.equal(refused.json.error, closedHingeRefusal(rooms.westRoomId, rooms.eastRoomId, rooms.continentId))
     })
 
     await t.test('WALKER carries an owned thing through a hinge', async () => {
@@ -498,6 +521,62 @@ test('places keep owner-controlled hinges against real PostgreSQL', { timeout: 9
       assert.equal(west.status, 200, JSON.stringify(west.json))
     })
 
+    await t.test('a closed entry names the parent to stand in only while that parent is public and active', async () => {
+      const rooms = await resetCity([FOUNDER, NEIGHBOR, WALKER])
+      const db = connectedDatabase()
+      const innerRoomId = Number((await db.query<{ id: number }>(`
+        INSERT INTO places (parent_id, place_kind, name, description, owner_id)
+        VALUES ($1, 'place', 'Inner Room', 'a room inside the west room', 1)
+        RETURNING id
+      `, [rooms.westRoomId])).rows[0]!.id)
+      await standIn(WALKER.id, rooms.eastRoomId)
+      // Each surface is read as a first refusal, without the repeated-refusal line.
+      const firstTry = () => db.query('DELETE FROM resident_refusal_state WHERE resident_id = $1', [WALKER.id])
+      // Everything but the error text, the request id and the action id stays the same.
+      const sameShape = (body: Json) => {
+        const { error: _error, request_id: _request, action, ...rest } = body
+        const { error: _actionError, id: _actionId, ...actionRest } = action as Json
+        return { ...rest, action: actionRest }
+      }
+      const both = async (parentId: number | null) => {
+        const expected = closedHingeRefusal(innerRoomId, rooms.eastRoomId, parentId)
+        await firstTry()
+        const http = await walkTo(app, WALKER.secret, innerRoomId)
+        assert.equal(http.status, 403, JSON.stringify(http.json))
+        await firstTry()
+        const tool = await mcpMove(app, WALKER.secret, innerRoomId)
+        assert.equal(tool.isError, true)
+        for (const body of [http.json, tool.json]) {
+          assert.equal(body.error, expected)
+          assert.equal((body.action as Json).error, expected)
+          assert.equal(body.http_status, 403)
+          assert.equal(body.error_class, 'forbidden')
+        }
+        return Object.freeze({ http: sameShape(http.json), tool: sameShape(tool.json) })
+      }
+
+      const named = await both(rooms.westRoomId)
+
+      await db.query(`
+        INSERT INTO moderation_actions (target_type, target_id, action, actor_id, reason)
+        VALUES ('place', $1, 'remove', 1, 'removed by maintainer')
+      `, [rooms.westRoomId])
+      const hidden = await both(null)
+      assert.deepEqual(hidden, named, 'only the error text changes when the parent is hidden')
+
+      await db.query(`
+        INSERT INTO moderation_actions (target_type, target_id, action, actor_id, reason)
+        VALUES ('place', $1, 'restore', 1, 'restored by maintainer')
+      `, [rooms.westRoomId])
+      await both(rooms.westRoomId)
+
+      await db.query('UPDATE places SET retired_at = clock_timestamp() WHERE id = $1', [rooms.westRoomId])
+      await both(null)
+      assert.equal((await db.query<{ current_place_id: number }>(
+        'SELECT current_place_id FROM resident_presence WHERE resident_id = $1', [WALKER.id],
+      )).rows[0]!.current_place_id, rooms.eastRoomId)
+    })
+
     await t.test('a step waiting on a hinge close returns the closed-hinge refusal', async () => {
       const rooms = await resetCity([FOUNDER, NEIGHBOR, WALKER])
       await openHinge(rooms.eastRoomId, rooms.westRoomId)
@@ -516,7 +595,7 @@ test('places keep owner-controlled hinges against real PostgreSQL', { timeout: 9
         committed = true
         const result = await step
         assert.equal(result.status, 403, JSON.stringify(result.json))
-        assert.equal(result.json.error, closedHingeRefusal(rooms.westRoomId, rooms.eastRoomId))
+        assert.equal(result.json.error, closedHingeRefusal(rooms.westRoomId, rooms.eastRoomId, rooms.continentId))
         assert.equal((await db.query<{ current_place_id: number }>(
           'SELECT current_place_id FROM resident_presence WHERE resident_id = $1', [WALKER.id],
         )).rows[0]!.current_place_id, rooms.eastRoomId)

@@ -119,6 +119,39 @@ export function registerLawsPresenceMovementTests(): void {
     assert.equal((await setHome(7, 12, allowed.db)).homePlaceId, 12)
   })
 
+  test('a closed entry names the destination parent only while that parent is public and active', async () => {
+    const closed = (parentLookup: Record<string, unknown>[]) => fakeSql(({ text }) => {
+      if (/FROM resident_presence/.test(text)) return [{ current_place_id: 2, home_place_id: 3 }]
+      if (/SELECT id, parent_id, retired_at, owner_id, open_to_things, hinge_to FROM places/.test(text)) return [
+        { id: 2, parent_id: 1, retired_at: null, hinge_to: null },
+        { id: 199, parent_id: 119, retired_at: null, hinge_to: null },
+      ]
+      if (/FROM places parent/.test(text)) return parentLookup
+      return []
+    })
+
+    const named = closed([{ id: 119 }])
+    await assert.rejects(moveResident(7, 199, named.db), (error: unknown) => (
+      error instanceof EngineError
+      && error.status === 403
+      && error.message === 'place_id 199 exists, but entry is closed from your current place_id 2; entry opens when you stand in its parent, place_id 119, one of its direct children, or a place with an open hinge to it, so use the public map outline to move one edge at a time'
+    ))
+    const lookup = named.calls.find(call => /FROM places parent/.test(call.text))
+    assert.ok(lookup, 'the refusal looks up the destination parent')
+    assert.deepEqual(lookup.values, [119])
+    assert.match(lookup.text, /parent\.retired_at IS NULL/u)
+    assert.match(lookup.text, /moderation_actions/u)
+    assert.match(lookup.text, /'remove'/u)
+    assert.equal(named.calls.some(call => /UPDATE resident_presence/.test(call.text)), false)
+
+    const hidden = closed([])
+    await assert.rejects(moveResident(7, 199, hidden.db), (error: unknown) => (
+      error instanceof EngineError
+      && error.status === 403
+      && error.message === 'place_id 199 exists, but entry is closed from your current place_id 2; entry opens when you stand in its parent, one of its direct children, or a place with an open hinge to it, so use the public map outline to move one edge at a time'
+    ))
+  })
+
   test('ordinary resident movement only crosses one parent-child edge', async () => {
     const denied = fakeSql(({ text }) => {
       if (/FROM resident_presence/.test(text)) return [{ current_place_id: 2, home_place_id: 3 }]

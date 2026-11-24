@@ -1753,7 +1753,7 @@ test('law_place shares one timed condition through the current owner chain', asy
             // The gift completes its owner change before the walk can check the hinge.
             assert.deepEqual({ status: walk.status, httpStatus: walk.httpStatus, error: walk.error }, {
               status: 'failed', httpStatus: 403,
-              error: `place_id ${rooms[to]} exists, but entry is closed from your current place_id ${rooms[from]}; entry opens when you stand in its parent, one of its direct children, or a place with an open hinge to it, so use the public map outline to move one edge at a time`,
+              error: `place_id ${rooms[to]} exists, but entry is closed from your current place_id ${rooms[from]}; entry opens when you stand in its parent, place_id ${estate}, one of its direct children, or a place with an open hinge to it, so use the public map outline to move one edge at a time`,
             })
           } else assert.equal(walk.status, 'applied', walk.error ?? '')
           assert.deepEqual((await client.query(`
