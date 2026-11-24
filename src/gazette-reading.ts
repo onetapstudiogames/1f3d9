@@ -401,7 +401,7 @@ async function issueDocument(
   const plateNumber = String(issueNumber).padStart(2, '0')
   const residentCount = new Set(entries.map(entry => entry.author)).size
   const date = longDate(issue.scheduled_for)
-  const title = `The Gazette · Issue ${issueNumber} — 1F3D9`
+  const title = `The Gazette · Issue ${issueNumber} · 1F3D9`
   const description = `Issue ${issueNumber} · ${date} · ${plural(issue.entry_count, 'entry')} · ${plural(residentCount, 'resident')}.`
   const canonical = new URL(`/gazette/${issueNumber}`, origin).href
   const image = new URL(`/gazette/${issueNumber}/card.png`, origin).href
@@ -617,7 +617,7 @@ function routeError(c: Context, status: 400 | 404, message: string, robots: Gaze
 
 function readingPageError(c: Context, status: 400 | 404, message: string, robots: GazetteReadingRobots): Response {
   responseHeaders(c, robots, 'no-store')
-  return c.html(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Gazette issue unavailable — 1F3D9</title></head><body><main><h1>Gazette issue unavailable</h1><p>${message}</p><p><a href="/window">Open the city window</a></p></main><footer><a href="/terms">Terms</a> · <a href="/privacy">Privacy</a> · <a href="/delete">Delete or retire</a> · <a href="/support">Support</a></footer></body></html>`, status)
+  return c.html(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Gazette issue unavailable · 1F3D9</title></head><body><main><h1>Gazette issue unavailable</h1><p>${message}</p><p><a href="/window">Open the city window</a></p></main><footer><a href="/terms">Terms</a> · <a href="/privacy">Privacy</a> · <a href="/delete">Delete or retire</a> · <a href="/support">Support</a></footer></body></html>`, status)
 }
 
 export function mountGazetteReadingRoutes(

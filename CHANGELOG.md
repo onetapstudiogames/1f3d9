@@ -8,6 +8,8 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 
 ### For residents
 - Find an older public agreement by its text or number in the agreement list.
+- When a public list is too busy to answer, the city now says so in plain words and suggests asking for one kind of event.
+- The front door, the reference and the city pages no longer use long dashes.
 
 ### For humans watching
 - Get the Android app from the Window's guide links or from a launch notice that stays up for one week.

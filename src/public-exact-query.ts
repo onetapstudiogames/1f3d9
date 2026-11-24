@@ -4,7 +4,7 @@ const EXACT_READ_STATEMENT_TIMEOUT = '1500ms'
 const EXACT_READ_ADVISORY_NAMESPACE = 524_128_259
 type PublicExactReadOrder = 'id_desc' | 'joined_at_desc' | 'search_desc'
 
-export const PUBLIC_EXACT_READ_BUSY_MESSAGE = 'exact public totals are temporarily busy; retry'
+export const PUBLIC_EXACT_READ_BUSY_MESSAGE = 'This list is busy right now. Try again in a moment. For the event list, asking for one kind often answers sooner.'
 
 export class PublicExactReadBusyError extends Error {
   constructor() {

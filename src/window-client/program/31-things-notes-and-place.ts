@@ -1,6 +1,6 @@
 export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves at the thing's own place_id, the same
-  // pattern noteCard uses, so every caller — the Rooms tab and the
-  // place-scoped or city-wide Things list — inherits it uniformly.
+  // pattern noteCard uses, so every caller (the Rooms tab and the
+  // place-scoped or city-wide Things list) inherits it uniformly.
   function renderThings(target, things, placeOf) {
     if (!target) return
     if (!things.length) {
@@ -96,9 +96,9 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
 
   // Decision #75: every note card resolves quiet at its own place_id, never
   // at whatever place happens to be selected. This is the one place that
-  // check runs, so every list that renders notes through noteCard — the
+  // check runs, so every list that renders notes through noteCard (the
   // Rooms tab, the Conversations tab (with or without a resident filter),
-  // and any place-scoped or city-wide feed — inherits it for free.
+  // and any place-scoped or city-wide feed) inherits it for free.
   function noteCard(note, place) {
     if (isQuietPlace(place)) {
       const card = element('article', 'note-card note-card-quiet')
@@ -512,7 +512,7 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
     if (!nodes.placeFrontMatter) return
     // Fourth review pass on row 75: the Place tab renders front matter
     // before the occupants/things/conversation panels below apply their own
-    // quiet checks — this block must resolve quiet for itself instead of
+    // quiet checks, so this block must resolve quiet for itself instead of
     // assuming an earlier check in renderPlace already covered it, or a
     // quiet place's own owner-chosen thing names and maker/owner handles
     // would still print here.
@@ -658,7 +658,7 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
       if (place.status === 'retired' && place.retiredAt) {
         const history = place.nameHistory.length
           ? ' Name history: ' + place.nameHistory.map(span => span.name + ' (' +
-            span.startedAt.toLocaleDateString() + '–' +
+            span.startedAt.toLocaleDateString() + ' to ' +
             (span.endedAt ? span.endedAt.toLocaleDateString() : 'current') + ')').join(' → ') + '.'
           : ''
         nodes.placeSummary.textContent = 'This place was retired ' +
