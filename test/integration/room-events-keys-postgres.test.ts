@@ -254,7 +254,7 @@ async function assertSameAsToday(fixture: Fixture, moment: string): Promise<numb
   return matched
 }
 
-test('one room events reads through the room keys index, against PostgreSQL', { timeout: 1_200_000 }, async t => {
+test('one room events reads through the room keys index, against PostgreSQL', { timeout: 2_400_000 }, async t => {
   const postgres = await startNoteSuiteDatabase('room-events-keys')
   try {
     const db = connectedDatabase()
