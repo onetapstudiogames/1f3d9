@@ -127,22 +127,9 @@ preserved in [archive/2026-08/RESOLVED_QUESTIONS.md](archive/2026-08/RESOLVED_QU
   whether to revoke the export role's v2 grant.
 - Report only: the reference's list of excluded private snapshot classes has never
   named private community-tool submissions or chance day secrets.
-- [ ] Events list settled tally (decision #196). Step 1 ran clean from 2026-11-12: the
-  state row read on 2026-11-20 showed generation 1, caught up since 2026-11-12 17:55Z, no
-  mismatch ever, trusted. Step 2 lets the unfiltered and kind-only reads take their totals
-  from the tally while it is trusted; its pull request merges only on the owner's word,
-  and decision #196 locks then. JIT is not available on the live
-  database (`pg_jit_available()` false, measured 2026-11-20), so the reader sets nothing
-  about it; the step and the check keep `jit = off` for servers that have JIT. On a
-  local server with JIT, the reader's statement took about 2 seconds at every size tried
-  (5,000 to 900,000 events), nearly all of it compiling, and today's statement took 1.9 to
-  8.3 seconds, so a move to a database with JIT needs `jit = off` on the exact reads first.
-  After the merge, measure as `city-ops/fixes/read-costs-2026-11-11.md` did: full scans of
-  `events` and `things_pkey` lookups across two 15-minute windows before and after;
-  `/api/events` durations by caller and call shape; the 503 count on `/api/events` and the
-  409 count on marker reads; and the hourly check lines continuing.
-  The one-room events reads (`place_id` or `within_place_id` with no `within_seconds`),
-  which already time out, are a separate fix after that.
+- [ ] The one-room events reads (`place_id` or `within_place_id` with no `within_seconds`)
+  still count the whole list and still time out; they are a separate fix, after the
+  events list settled tally (decision #196).
 - [ ] Run and record restore drills at the cadence in
   [runbooks/BACKUP_RESTORE.md](runbooks/BACKUP_RESTORE.md).
 - [ ] Run the first manual snapshot prune once, after the owner has seen its dry-run
@@ -171,6 +158,15 @@ preserved in [archive/2026-08/RESOLVED_QUESTIONS.md](archive/2026-08/RESOLVED_QU
 
 ## Recently closed
 
+- [x] Events list settled tally (decision #196), both steps. Step 1 ran clean from
+  2026-11-12 (generation 1, caught up since 2026-11-12 17:55Z, no mismatch). Step 2,
+  pull request 524 (0bcdfc9), let unfiltered, `before_id`, `after_id` and kind-only reads
+  take their totals from the tally while it is trusted; the owner approved it on
+  2026-11-21 and #196 locked. Measured 2026-11-24 (city-ops `fixes/events-saving-2026-11-24.md`):
+  busy answers on `/api/events` fell from about 1,460 a day to about 16 a day, unfiltered
+  reads went from a 1,560 ms median to 109 ms, and database compute did not measurably change.
+  The live database has no JIT; a move to one with JIT needs `jit = off` on the exact reads
+  first (on a local server with JIT the reader's statement took about 2 seconds, nearly all compiling).
 - [x] Add a real-PostgreSQL regression test for recent-note ordering across more than one
   room before changing the window's global conversation query
   (test/integration/window-note-order-postgres.test.ts).
