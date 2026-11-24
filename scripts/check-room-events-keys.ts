@@ -9,8 +9,11 @@
 //   --phase index     after the index migration: the index is the reviewed one, valid and
 //                     ready, and for each room the new one-room statement answers exactly
 //                     as today's (frozen from main in test/helpers/room-events-oracle), with
-//                     the new statement's time and whether it used the index.
-//   node --experimental-strip-types scripts/check-room-events-keys.ts --phase index --rooms 3,1093
+//                     the new statement's time and whether it looked up each room key (a
+//                     read with a kind on a big room reads that kind's events instead).
+//                     --kinds adds those kinds to each room's reads, with and without rooms
+//                     below; with no --kinds each room is read without a kind only.
+//   node --experimental-strip-types scripts/check-room-events-keys.ts --phase index --rooms 3,1093 --kinds note
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
@@ -29,7 +32,7 @@ import {
 import type { PublicEventFilters, PublicPage } from '../src/public-pagination.ts'
 
 type Phase = 'function' | 'index'
-type Options = Readonly<{ phase: Phase; rooms: readonly number[] }>
+type Options = Readonly<{ phase: Phase; rooms: readonly number[]; kinds: readonly string[] }>
 
 export function parseRoomKeysCheckArgs(args: readonly string[]): Options {
   const value = (name: string): string | undefined => {
@@ -41,7 +44,11 @@ export function parseRoomKeysCheckArgs(args: readonly string[]): Options {
   const rooms = (value('rooms') ?? '3').split(',').map(Number)
   assert(rooms.length > 0 && rooms.length <= 20 && rooms.every(id => Number.isSafeInteger(id) && id >= 1 && id <= 2_147_483_647),
     '--rooms lists 1 to 20 room ids')
-  return Object.freeze({ phase, rooms })
+  const kindsArg = value('kinds')
+  const kinds = kindsArg === undefined ? [] : kindsArg.split(',')
+  assert(kindsArg === undefined || (kinds.length >= 1 && kinds.length <= 5 && kinds.every(kind => /^[a-z][a-z0-9_]{0,63}$/u.test(kind))),
+    '--kinds lists 1 to 5 event kinds')
+  return Object.freeze({ phase, rooms, kinds })
 }
 
 async function readOnly<T>(client: Client, work: () => Promise<T>): Promise<T> {
@@ -71,7 +78,7 @@ async function checkFunction(client: Client): Promise<Record<string, unknown>> {
   })
 }
 
-async function checkIndex(client: Client, rooms: readonly number[]): Promise<Record<string, unknown>> {
+async function checkIndex(client: Client, rooms: readonly number[], kinds: readonly string[]): Promise<Record<string, unknown>> {
   const pagination = await import('../src/public-pagination.ts')
   const { budgetedExactStatement } = await import('../src/public-exact-query.ts')
   const oracle = (JSON.parse(await readFile(new URL('../test/helpers/room-events-oracle/main-af009f2.json', import.meta.url), 'utf8')) as
@@ -88,8 +95,8 @@ async function checkIndex(client: Client, rooms: readonly number[]): Promise<Rec
   const page: PublicPage = Object.freeze({ ok: true, cursor: null, limit: 20, fetchLimit: 21 })
   const results: Record<string, unknown>[] = []
   for (const placeId of rooms) {
-    for (const includeDescendants of [false, true]) {
-      const filters: PublicEventFilters = { kind: null, actor: null, placeId, includeDescendants, withinSeconds: null, afterId: null }
+    for (const [includeDescendants, kind] of [false, true].flatMap(within => [null, ...kinds].map(kind => [within, kind] as const))) {
+      const filters: PublicEventFilters = { kind, actor: null, placeId, includeDescendants, withinSeconds: null, afterId: null }
       let sent: Readonly<{ text: string; params: readonly unknown[] }> | null = null
       await pagination.loadPublicEventCollectionRows(async (text, params) => { sent = { text, params }; return [] }, filters, page)
         .catch(() => undefined)
@@ -104,10 +111,11 @@ async function checkIndex(client: Client, rooms: readonly number[]): Promise<Rec
           .map(row => String(row['QUERY PLAN']))
         const before = (await client.query(today, [...params])).rows
         return {
-          room: placeId, mode: includeDescendants ? 'within_place_id' : 'place_id',
+          room: placeId, mode: includeDescendants ? 'within_place_id' : 'place_id', kind,
           same_answer: digest(now) === digest(before), total_items: now[0]?.total_items, returned: now.filter(row => row.id != null).length,
           ms, execution_ms: Number(plan.find(line => line.startsWith('Execution Time'))?.match(/[0-9.]+/u)?.[0]),
-          uses_index: plan.some(line => line.includes('events_room_keys')),
+          // The way the read did not take shows in the plan as never executed.
+          each_key: plan.some(line => line.includes('events_room_keys') && !line.includes('never executed')),
         }
       })
       results.push(result)
@@ -123,7 +131,7 @@ async function main(): Promise<void> {
   const client = new Client({ connectionString: url })
   await client.connect()
   try {
-    const result = options.phase === 'function' ? await checkFunction(client) : await checkIndex(client, options.rooms)
+    const result = options.phase === 'function' ? await checkFunction(client) : await checkIndex(client, options.rooms, options.kinds)
     console.info(JSON.stringify({ phase: options.phase, at: new Date().toISOString(), ...result }, null, 1))
   } finally {
     await client.end()

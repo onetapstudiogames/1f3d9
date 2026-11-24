@@ -436,9 +436,24 @@ const SELECTED_PLACES_SQL = `selected_places AS (
  * on its own, because one index lookup for a list of keys gets slower with every key
  * (a busy room has a key for each of its notes and things).
  *
+ * A read with a kind can instead take one pass over the events of that kind, as today's
+ * statement does through events_kind, and the statement picks the cheaper way when it
+ * runs. A lookup per key costs about the room's own events; a pass over the kind costs
+ * that kind's events in the whole city. So the keys win while the room is small beside
+ * the kind, and the kind wins when the room holds much of the city (a continent, the
+ * world) or the kind is rare. room_plan counts the kind's events, stopping at
+ * ROOM_KEYS_KIND_RATIO times the room's keys, and takes each key only when the kind has
+ * at least that many. Both ways keep exactly the events publicEventFilter keeps: the
+ * filter runs on either way's candidates, and the way only changes how fast it answers.
+ *
  * room_events holds each kept event once, with its feed room, change id and text bytes;
  * the totals count it, and the page takes its newest rows before reading their details.
  */
+// About how many of a kind's events one room key's lookup is worth. Measured on the
+// one-room benchmark (scripts/benchmark-room-events.ts): a square-sized room's lookups
+// cost about 25 to 40 kind events each, counting the events each key brings back.
+const ROOM_KEYS_KIND_RATIO = 32
+
 function roomEventsStatement(includeDescendants: boolean, totalsMode: EventTotals): string {
   const numericPlace = (field: string): string => numericPlaceSql(includeDescendants, field)
   const rooms = includeDescendants ? 'selected_places room(id)' : '(VALUES ($3::integer)) room(id)'
@@ -465,21 +480,37 @@ function roomEventsStatement(includeDescendants: boolean, totalsMode: EventTotal
                AND ${numericPlace('thing.place_id')}
                AND thing.withdrawn_at IS NULL))
        )::text[] AS keys
+     ), room_plan AS MATERIALIZED (
+       SELECT $1::text IS NULL OR (
+           SELECT count(*) FROM (
+             SELECT 1 FROM events kind_event WHERE kind_event.kind = $1::text LIMIT bound.events
+           ) kind_events
+         ) >= bound.events AS each_key
+       FROM (
+         SELECT cardinality(room_keys.keys)::bigint * /* room keys kind ratio */ ${ROOM_KEYS_KIND_RATIO} AS events
+         FROM room_keys
+       ) bound
      ), room_events AS MATERIALIZED (
        SELECT event.id, feed.feed_room_id, change.change_id,
          ${PUBLIC_EVENT_TEXT_BYTES_SQL} AS text_bytes
        FROM (
-         SELECT DISTINCT keyed.id
-         FROM unnest((SELECT room_keys.keys FROM room_keys)) room_key(key)
+         SELECT keyed_event.* FROM (
+           SELECT DISTINCT keyed.id
+           FROM unnest((SELECT room_keys.keys FROM room_keys)) room_key(key)
+           CROSS JOIN LATERAL (
+             SELECT keyed_event.id FROM events keyed_event
+             WHERE public.event_room_keys(keyed_event.detail) && ARRAY[room_key.key]
+           ) keyed
+         ) candidate
          CROSS JOIN LATERAL (
-           SELECT keyed_event.id FROM events keyed_event
-           WHERE public.event_room_keys(keyed_event.detail) && ARRAY[room_key.key]
-         ) keyed
-       ) candidate
-       CROSS JOIN LATERAL (
-         -- OFFSET 0 keeps this one lookup by id per candidate, so the filter below runs on
-         -- the candidates only and never on a scan of all events of one kind.
-         SELECT event.* FROM events event WHERE event.id = candidate.id OFFSET 0
+           -- OFFSET 0 keeps this one lookup by id per candidate, so the filter below runs on
+           -- the candidates only and never on a scan of all events of one kind.
+           SELECT event.* FROM events event WHERE event.id = candidate.id OFFSET 0
+         ) keyed_event
+         WHERE (SELECT room_plan.each_key FROM room_plan)
+         UNION ALL
+         SELECT kind_event.* FROM events kind_event
+         WHERE kind_event.kind = $1::text AND NOT (SELECT room_plan.each_key FROM room_plan)
        ) event
        ${PUBLIC_EVENT_FEED_ROOM_JOIN}
        LEFT JOIN public_change_log change ON change.event_id = event.id

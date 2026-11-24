@@ -3,7 +3,8 @@
 // the room keys, test/helpers/room-events-oracle) beside the statement this clone's builder
 // sends, which finds its candidates through events_room_keys. Each shape runs through the
 // route's own budgeted statement text with parallel workers off, as the route has them;
-// "before" runs get a 30 s statement limit instead of 1.5 s so their full cost shows. JIT is
+// both get a 30 s statement limit instead of the route's 1.5 s so their full cost shows, and
+// each shape records whether its slowest run fits the route's 1.5 s. JIT is
 // off in every run: the live server has no JIT library (pg_jit_available() is false), so a
 // local JIT compile would time a cost the city never pays. Both
 // answers are compared row for row. It also times the index build and the cost one event
@@ -56,6 +57,8 @@ async function captured(load: (query: (text: string, params: readonly unknown[])
   return statement
 }
 
+// The route's statement budget (src/public-exact-query.ts): a slower read answers 503 busy.
+const ROUTE_BUDGET_MS = 1_500
 const sorted = (samples: readonly number[]) => [...samples].sort((a, b) => a - b)
 const quantile = (samples: readonly number[], q: number) => sorted(samples)[Math.min(samples.length - 1, Math.floor(samples.length * q))]!
 
@@ -87,7 +90,9 @@ async function timedRuns(client: PoolClient, statement: Statement, options: Opti
   return Object.freeze({
     samples, median: quantile(samples, 0.5), max: sorted(samples).at(-1)!,
     executionMs: Number(plan.find(line => line.startsWith('Execution Time'))?.match(/[0-9.]+/u)?.[0]),
-    usesRoomKeysIndex: plan.some(line => line.includes('events_room_keys')),
+    // A way the statement did not take shows in the plan as never executed.
+    usesRoomKeysIndex: plan.some(line => line.includes('events_room_keys') && !line.includes('never executed')),
+    withinRouteBudget: sorted(samples).at(-1)! < ROUTE_BUDGET_MS,
     plan,
     answer: JSON.stringify(rows.map(({ __exact_read_slot: _slot, ...row }) => row)),
     totals: { items: rows[0]?.total_items, textBytes: rows[0]?.total_text_bytes, leftOut: rows[0]?.left_out_feed_rooms, returned: rows.filter(row => row.id != null).length },
@@ -133,6 +138,10 @@ async function runSize(pool: Pool, events: number, options: Options) {
   const square = { ...BASE, placeId: rooms.squareId }
   const within = { ...square, includeDescendants: true }
   const small = { ...BASE, placeId: rooms.smallRoomId }
+  // The big rooms: the continent holds every seeded room, and the world holds the continent.
+  const worldId = Number((await pool.query(`SELECT id FROM places WHERE place_kind = 'world'`)).rows[0]!.id)
+  const continent = { ...BASE, placeId: seeded.continentId, includeDescendants: true }
+  const world = { ...BASE, placeId: worldId, includeDescendants: true }
   const shapes: ReadonlyArray<readonly [string, PublicEventFilters, PublicPage]> = [
     ['square place_id', square, page()],
     ['square within_place_id', within, page()],
@@ -145,6 +154,14 @@ async function runSize(pool: Pool, events: number, options: Options) {
     ['small place_id', small, page()],
     ['small within_place_id', { ...small, includeDescendants: true }, page()],
     ['small place_id kind=note', { ...small, kind: 'note' }, page()],
+    ['square within_place_id kind=rare_kind_25', { ...within, kind: 'rare_kind_25' }, page()],
+    ['continent within_place_id', continent, page()],
+    ['continent within_place_id kind=note', { ...continent, kind: 'note' }, page()],
+    ['continent within_place_id kind=action', { ...continent, kind: 'action' }, page()],
+    ['continent within_place_id kind=rare_kind_25', { ...continent, kind: 'rare_kind_25' }, page()],
+    ['world within_place_id', world, page()],
+    ['world within_place_id kind=note', { ...world, kind: 'note' }, page()],
+    ['world within_place_id kind=rare_kind_25', { ...world, kind: 'rare_kind_25' }, page()],
   ]
   const oracleText = (filters: PublicEventFilters) => oracle.statements[filters.includeDescendants ? 'withinCounted' : 'exactCounted']!
   const client = await pool.connect()
@@ -154,14 +171,14 @@ async function runSize(pool: Pool, events: number, options: Options) {
       const after = await captured(query => pagination.loadPublicEventCollectionRows(query, filters, at))
       const before = { text: oracleText(filters), params: after.params }
       const beforeRuns = await timedRuns(client, before, options, true, '30s')
-      const afterRuns = await timedRuns(client, after, options, true, '1500ms')
+      const afterRuns = await timedRuns(client, after, options, true, '30s')
       assert.equal(afterRuns.answer, beforeRuns.answer, `${name}: the room read must answer exactly as today`)
       const brief = ({ plan: _plan, answer: _answer, ...rest }: typeof beforeRuns) => rest
       results[name] = {
         sameAnswer: true, before: brief(beforeRuns), after: brief(afterRuns),
         afterPlan: afterRuns.plan,
       }
-      console.info(JSON.stringify({ events, shape: name, before: beforeRuns.median, after: afterRuns.median, index: afterRuns.usesRoomKeysIndex }))
+      console.info(JSON.stringify({ events, shape: name, before: beforeRuns.median, beforeMax: beforeRuns.max, after: afterRuns.median, afterMax: afterRuns.max, eachKey: afterRuns.usesRoomKeysIndex, fits: afterRuns.withinRouteBudget }))
     }
   } finally {
     client.release()
