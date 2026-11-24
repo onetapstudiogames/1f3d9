@@ -57,6 +57,8 @@ export interface PublicMapOutlinePlace extends Readonly<Record<string, unknown>>
   readonly quiet: boolean
   readonly feed: boolean
   readonly rough_room: boolean
+  /** Whether the place thumbnail route can return a drawing; never the drawing itself. */
+  readonly has_drawing: boolean
   readonly hinge: PublicHinge | null
   readonly created_at: string
   readonly places: number
@@ -226,6 +228,7 @@ function outlinePlace(row: Readonly<Record<string, unknown>>): PublicMapOutlineP
     quiet: row.quiet,
     feed: row.feed,
     rough_room: row.rough_room,
+    has_drawing: row.has_drawing === true,
     hinge: publicHinge(row.hinge),
     created_at: publicTimestamp(row.created_at),
     places: safeCount(row.places, 'subplace count'),
@@ -233,6 +236,11 @@ function outlinePlace(row: Readonly<Record<string, unknown>>): PublicMapOutlineP
     notes: safeCount(row.notes, 'note count'),
     children: Object.freeze([]) as readonly never[],
   })
+}
+
+/** A moderation-hidden place has no public drawing, so its thumbnail answers 404. */
+function placeHasPublicDrawing(place: PublicMapOutlinePlace | undefined): boolean {
+  return place?.has_drawing === true && (place as Record<string, unknown>).moderated !== true
 }
 
 export async function readPublicMapOutline(
@@ -250,6 +258,7 @@ export async function readPublicMapOutline(
          octet_length(p.description)::integer AS description_text_bytes,
          p.owner_id, owner.handle AS owner,
          p.open_to_building, p.open_to_things, p.open_to_notes, p.quiet, p.feed, p.rough_room, p.created_at,
+         p.drawing IS NOT NULL AS has_drawing,
          ${publicHingeSql('p')} AS hinge,
          totals.subplace_items AS places,
          totals.thing_items AS things,
@@ -290,6 +299,7 @@ export async function readPublicMapOutline(
          octet_length(p.description)::integer AS description_text_bytes,
          p.owner_id, owner.handle AS owner,
          p.open_to_building, p.open_to_things, p.open_to_notes, p.quiet, p.feed, p.rough_room, p.created_at,
+         p.drawing IS NOT NULL AS has_drawing,
          ${publicHingeSql('p')} AS hinge,
          child_totals.subplace_items AS places,
          child_totals.thing_items AS things,
@@ -349,6 +359,7 @@ export async function readPublicMapOutline(
   )
   const publicParent = Object.freeze({
     ...moderated[0] as PublicMapOutlinePlace,
+    has_drawing: placeHasPublicDrawing(moderated[0]),
     front_matter: (moderated[0] as Record<string, unknown>).moderated === true
       ? Object.freeze([])
       : frontMatter.get(parent.id) ?? Object.freeze([]),
@@ -357,6 +368,7 @@ export async function readPublicMapOutline(
   const parentIsWorldRoot = isWorldRootRow(parent)
   const publicSubplaces = Object.freeze(page.items.map((row, index) => Object.freeze({
     ...moderated[index + 1] as PublicMapOutlinePlace,
+    has_drawing: placeHasPublicDrawing(moderated[index + 1]),
     front_matter: (moderated[index + 1] as Record<string, unknown>).moderated === true
       ? Object.freeze([])
       : frontMatter.get(row.id) ?? Object.freeze([]),

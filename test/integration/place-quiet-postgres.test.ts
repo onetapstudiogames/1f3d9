@@ -321,6 +321,33 @@ test('place quiet marks apply, refuse, and disclose correctly in PostgreSQL', {
       }
     })
 
+    await t.test('the map outline says which places have a drawing', async () => {
+      const seeded = await resetDatabase()
+      await connectedDatabase().query(`
+        UPDATE places SET drawing = $2::jsonb, drawing_state = 'complete',
+          drawing_description = 'A lit reading lamp.'
+        WHERE id = $1
+      `, [seeded.roomId, JSON.stringify({
+        palette: ['#174d3c'],
+        indices: [0, ...Array.from({ length: 63 }, () => null)],
+      })])
+      await connectedDatabase().query(`
+        INSERT INTO places (parent_id, place_kind, name, description, owner_id)
+        VALUES ($1, 'place', 'Undrawn Room', 'no drawing yet', 1)
+      `, [seeded.continentId])
+      const response = await app.request(`/api/map?view=outline&parent_id=${seeded.continentId}`)
+      assert.equal(response.status, 200, await response.clone().text())
+      const body = await response.json() as {
+        place: { has_drawing: unknown }
+        subplaces: Array<{ name: string; has_drawing: unknown }>
+      }
+      assert.equal(body.place.has_drawing, false)
+      assert.deepEqual(
+        body.subplaces.map(place => [place.name, place.has_drawing]).sort(),
+        [['Reading Room', true], ['Undrawn Room', false]],
+      )
+    })
+
     await t.test('the protected world root can never be marked quiet', async () => {
       await resetDatabase()
       const worldId = Number((await connectedDatabase().query<{ id: number }>(

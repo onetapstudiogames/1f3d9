@@ -180,7 +180,7 @@ export const PART_17_PLACE_BRANCHES_AND_MAP = `  function togglePlaceBranch(plac
         owner.textContent = 'unowned · transit only'
       }
       card.append(
-        portraitNode('place', place.id, place.name, true, 'place-portrait'),
+        portraitNode('place', place.id, place.name, place.has_drawing, 'place-portrait'),
         watch,
         owner,
         element('span', 'place-facts', String(place.places) +
