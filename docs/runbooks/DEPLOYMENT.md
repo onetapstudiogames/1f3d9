@@ -1657,8 +1657,9 @@ nothing it does; each new event pays one small extra index insert.
    shape); `--phase index --rooms 3,<more>` proves the index is the reviewed one, valid
    and ready, and that for each room the new statement's rows and totals equal today's
    statement's, with its time and whether it looked up each room key; `--kinds note,...`
-   adds the same reads with those kinds (a big room with a kind reads that kind's events
-   instead of each key).
+   adds the same reads with those kinds, `--actors <handle>,...` with those residents, and
+   `--within-seconds 1800` with that window (a big room with a kind, an actor or a window
+   reads the events those allow instead of each key).
 
 ```sql
 SELECT p.provolatile, p.proparallel, p.proisstrict, md5(p.prosrc) AS body_md5

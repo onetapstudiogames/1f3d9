@@ -135,9 +135,10 @@ preserved in [archive/2026-08/RESOLVED_QUESTIONS.md](archive/2026-08/RESOLVED_QU
   `GET /api/events?within_place_id=3&limit=20` and `?place_id=3&limit=20` (both 200, not
   503 busy) and the index size; the read cost now grows with a room's own history, so
   note any room whose own events pass about 40,000, where the local benchmark passed
-  0.5 s. A read with a kind on a big room (the world, a continent) reads that kind's
-  events as before; the same rooms without a kind, or with the commonest kinds, still
-  check most of the city's events and stay over the 1.5 s budget, as before.
+  0.5 s. A read with a kind, an actor or `within_seconds` on a big room (the world, a
+  continent) reads the events those allow as before; the same rooms with none of the
+  three, or with only the commonest kinds or busiest residents, still check most of the
+  city's events and stay over the 1.5 s budget, as before.
 - [ ] Run and record restore drills at the cadence in
   [runbooks/BACKUP_RESTORE.md](runbooks/BACKUP_RESTORE.md).
 - [ ] Run the first manual snapshot prune once, after the owner has seen its dry-run

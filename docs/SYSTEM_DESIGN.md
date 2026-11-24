@@ -2540,10 +2540,12 @@ these keys never go stale. A room read lists the room's keys at that moment (the
 the things there now and not withdrawn, the notes there now, and the offers on those rooms
 and things), looks each key up on its own, and runs the same place filter as before, once,
 on those candidates only; its totals count them and its page takes the newest. A read with
-a kind on a room that holds much of the city (a continent, the world), or with a rare kind,
-instead runs that filter over the events of its kind, as before the index: the statement
-counts the kind's events up to 32 times the room's keys and looks up each key only when
-the kind has at least that many. Either way the filter decides what is kept. Everything
+a kind, an actor or `within_seconds` on a room that holds much of the city (a continent,
+the world), or with a rare kind, a quiet resident or a short window, instead runs that
+filter over the events its kind, actor and window allow, as before the index: the
+statement counts those events up to 32 times the room's keys and looks up each key only
+when there are at least that many. A read with none of the three always looks up each
+key. Either way the filter decides what is kept. Everything
 that can change (where things and notes are, withdrawals, offers, the room tree, feed
 rooms, moderation) is still read when the read runs, so the answer is exactly what
 checking every event gives (`test/integration/room-events-keys-postgres.test.ts` compares
