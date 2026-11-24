@@ -1656,7 +1656,9 @@ nothing it does; each new event pays one small extra index insert.
    event without a refusal (so the build and later inserts cannot fail on any stored
    shape); `--phase index --rooms 3,<more>` proves the index is the reviewed one, valid
    and ready, and that for each room the new statement's rows and totals equal today's
-   statement's, with its time and whether it used the index.
+   statement's, with its time and whether it looked up each room key; `--kinds note,...`
+   adds the same reads with those kinds (a big room with a kind reads that kind's events
+   instead of each key).
 
 ```sql
 SELECT p.provolatile, p.proparallel, p.proisstrict, md5(p.prosrc) AS body_md5
