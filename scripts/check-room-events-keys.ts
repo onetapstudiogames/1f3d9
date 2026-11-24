@@ -78,9 +78,12 @@ async function checkIndex(client: Client, rooms: readonly number[]): Promise<Rec
     { statements: Record<string, string> }).statements
   const index = await readOnly(client, async () => {
     const rows = (await client.query(EVENTS_ROOM_KEYS_INDEX_STATE_QUERY)).rows
-    assert.deepEqual(eventsRoomKeysIndexRecoveryStatements(rows, EVENTS_ROOM_KEYS_INDEX_STATEMENT), [],
-      'events_room_keys must be the reviewed index, valid and ready')
-    return (await client.query(`SELECT pg_relation_size('public.events_room_keys')::bigint AS index_bytes`)).rows[0]!
+    if (eventsRoomKeysIndexRecoveryStatements(rows, EVENTS_ROOM_KEYS_INDEX_STATEMENT).length !== 0) {
+      throw new Error('events_room_keys is missing or not valid and ready; run the events-room-keys-index migration first')
+    }
+    // Times below include JIT compiling on a server that has JIT; the live server has none.
+    return (await client.query(`SELECT pg_relation_size('public.events_room_keys')::bigint AS index_bytes,
+      pg_jit_available() AS jit_available`)).rows[0]!
   })
   const page: PublicPage = Object.freeze({ ok: true, cursor: null, limit: 20, fetchLimit: 21 })
   const results: Record<string, unknown>[] = []

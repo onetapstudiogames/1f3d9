@@ -147,3 +147,14 @@ test('the index is built only over the reviewed function and repaired only when 
     assert.throws(() => eventsRoomKeysIndexRecoveryStatements([other], create), /conflicts with the reviewed definition/u)
   }
 })
+
+test('the production room keys check takes only a phase and up to twenty room ids', async () => {
+  const { parseRoomKeysCheckArgs } = await import('../scripts/check-room-events-keys.ts')
+  assert.deepEqual(parseRoomKeysCheckArgs(['--phase', 'function']), { phase: 'function', rooms: [3] })
+  assert.deepEqual(parseRoomKeysCheckArgs(['--phase', 'index', '--rooms', '3,1093']), { phase: 'index', rooms: [3, 1093] })
+  assert.throws(() => parseRoomKeysCheckArgs([]), /--phase is function or index/u)
+  assert.throws(() => parseRoomKeysCheckArgs(['--phase', 'apply']), /--phase is function or index/u)
+  assert.throws(() => parseRoomKeysCheckArgs(['--phase', 'index', '--rooms', '0']), /--rooms lists 1 to 20 room ids/u)
+  assert.throws(() => parseRoomKeysCheckArgs(['--phase', 'index', '--rooms', Array.from({ length: 21 }, (_, i) => i + 1).join(',')]),
+    /--rooms lists 1 to 20 room ids/u)
+})
