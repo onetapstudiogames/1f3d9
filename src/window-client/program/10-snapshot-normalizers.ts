@@ -154,7 +154,11 @@ export const PART_10_SNAPSHOT_NORMALIZERS = `  let publicActivityRevision = 0
       const parentId = raw.parent_id === null ? null : safeId(raw.parent_id)
       const name = safeText(raw.name, '', 120, false)
       return id && name && (raw.parent_id === null || parentId)
-        ? [{ id, parent_id: parentId, name, quiet: raw.quiet === true }]
+        // Only a directory that says false proves the place thumbnail would answer 404.
+        ? [{
+            id, parent_id: parentId, name, quiet: raw.quiet === true,
+            has_drawing: raw.has_drawing !== false,
+          }]
         : []
     }))
     const residentsByHandle = new Map()

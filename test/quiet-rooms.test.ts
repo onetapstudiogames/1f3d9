@@ -91,11 +91,11 @@ test('the directory shape sentence discloses quiet, everywhere it is stated', ()
   const referenceSource = source('src/reference.txt')
   assert.match(
     referenceSource,
-    /Place entries contain only type: "place", stable id, parent_id, name, and quiet/u,
+    /Place entries contain only type: "place", stable id, parent_id, name, quiet, and has_drawing/u,
   )
   assert.match(
     REFERENCE,
-    /Place entries contain only type: "place", stable id, parent_id, name, and quiet/u,
+    /Place entries contain only type: "place", stable id, parent_id, name, quiet, and has_drawing/u,
   )
   // The public directory response itself actually carries the field this
   // sentence now promises.

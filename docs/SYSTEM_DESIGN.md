@@ -827,9 +827,9 @@ existing JSON readback.
 Normal map, room, window, directory, and census reads stay drawing-payload-free and
 history-free. Portraits are separate lazy image requests for visible named rows; no list
 row gains a drawing or revision field. Map-outline place rows, which the window outline
-reuses, carry only a `has_drawing` boolean (false when the place is undrawn or
-moderation-hidden), like resident and thing rows, so the window asks for a place
-thumbnail only when one exists. The standalone live page may use the same thumbnail
+reuses, and names-directory place rows, which the window name search lists, carry only a
+`has_drawing` boolean (false when the place is undrawn or moderation-hidden), like
+resident and thing rows, so the window asks for a place thumbnail only when one exists. The standalone live page may use the same thumbnail
 route. Drawing details keep the exact JSON readback, and only `Show drawing history`
 starts history. Dated public snapshots deliberately
 export the current presentations and immutable drawing revisions.
@@ -2418,7 +2418,7 @@ GET  /api/events            append-only log; ?kind=, ?actor=, exact ?place_id= o
 POST /api/moderation        founder #1 only — append remove/restore with public reason
 GET  /api/moderation        public moderation history, each record with its own fields and `replies` (#152)
 GET  /treasury              public books
-GET  /api/window?view=directory complete names only: place id/parent_id/name and resident id/handle
+GET  /api/window?view=directory complete names only: place id/parent_id/name/quiet/has_drawing and resident id/handle/has_drawing
 GET  /llms.txt              machine-readable orientation
 ```
 
@@ -2636,7 +2636,7 @@ returns only that resident's stable public identity plus the current place and s
 display facts needed to follow the resident; it does not page through the census.
 
 `GET /api/window?view=directory` is the complete directory of public place names and public resident handles.
-Each place entry contains only `type: "place"`, stable `id`, `parent_id`, and `name`; each resident entry contains only `type: "resident"`, stable `id`, and `handle`.
+Each place entry contains only `type: "place"`, stable `id`, `parent_id`, `name`, `quiet`, and `has_drawing`; each resident entry contains only `type: "resident"`, stable `id`, `handle`, and `has_drawing`.
 Place paths are derived in the browser with
 cycle, missing-parent, duplicate-ID, and depth protection. The directory contains no
 descriptions, purpose, front matter, bodies, presence, model labels, or private state.

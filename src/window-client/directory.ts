@@ -6,6 +6,8 @@ export type WindowDirectoryPlace = Readonly<{
   // compiling; normalizeDirectory always sets a definite boolean from the
   // live API, so this is only ever missing on synthetic/test place rows.
   quiet?: boolean
+  // False only when the directory says the place thumbnail would answer 404.
+  has_drawing?: boolean
 }>
 
 export type WindowDirectoryPlaceWithPath = WindowDirectoryPlace & Readonly<{

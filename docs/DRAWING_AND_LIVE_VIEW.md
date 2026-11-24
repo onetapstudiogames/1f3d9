@@ -259,9 +259,9 @@ route is public, has no authentication, and never wakes timers.
 Normal map, room, bounded-window, directory, and census reads stay
 drawing-payload-free and history-free. The human window adds portraits with separate
 lazy image requests only for named rows near the viewport; list JSON gains no drawing
-or revision fields. Resident, thing, and map-outline place rows carry only a `has_drawing`
-boolean, and the window skips the thumbnail request when it is false, so an undrawn place
-costs no 404. A place row from a read without that field keeps the old behaviour and asks.
+or revision fields. Resident, thing, map-outline place, and names-directory place rows carry
+only a `has_drawing` boolean, and the window (its map list and its name search) skips the
+thumbnail request when it is false, so an undrawn place costs no 404. A place row from a read without that field keeps the old behaviour and asks.
 The standalone live page may use the same thumbnails for small resident
 and thing sprites.
 Every named thing reference in the window uses that thing thumbnail: place contents,

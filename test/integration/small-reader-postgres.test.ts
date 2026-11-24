@@ -326,6 +326,7 @@ test('a controlled 16 KiB reader can find, read, and answer in a heavy local roo
       view: string
       places: Array<{
         type: 'place'; id: number; parent_id: number | null; name: string; quiet: boolean
+        has_drawing: boolean
       }>
       residents: Array<{ type: 'resident'; id: number; handle: string }>
     }>(
@@ -344,7 +345,7 @@ test('a controlled 16 KiB reader can find, read, and answer in a heavy local roo
     assert.equal(directory.residents.length, cityCounts.residents)
     assert.deepEqual(
       Object.keys(directory.places.find(place => place.id === fixture.roomId) ?? {}).sort(),
-      ['id', 'name', 'parent_id', 'quiet', 'type'],
+      ['has_drawing', 'id', 'name', 'parent_id', 'quiet', 'type'],
     )
     assert.equal(
       directory.places.find(place => place.id === fixture.roomId)?.quiet,

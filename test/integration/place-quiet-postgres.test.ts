@@ -172,7 +172,7 @@ async function placeRecordQuiet(app: import('hono').Hono, roomId: number): Promi
 }
 
 // The served reference sentence for GET /api/window?view=directory rows, e.g.
-// Place entries contain only type: "place", stable id, parent_id, name, and quiet;
+// Place entries contain only type: "place", stable id, parent_id, name, quiet, and has_drawing;
 // resident entries contain only type: "resident", stable id, handle, and has_drawing.
 function directoryRowKeysFromReference(text: string): { place: string[]; resident: string[] } {
   const match = text.match(
@@ -346,6 +346,54 @@ test('place quiet marks apply, refuse, and disclose correctly in PostgreSQL', {
         body.subplaces.map(place => [place.name, place.has_drawing]).sort(),
         [['Reading Room', true], ['Undrawn Room', false]],
       )
+    })
+
+    await t.test('the window directory says which places have a drawing, never for a hidden one', async () => {
+      const seeded = await resetDatabase()
+      const { readPublicDirectory } = await import('../../src/public-directory.ts')
+      const drawing = JSON.stringify({
+        palette: ['#174d3c'],
+        indices: [0, ...Array.from({ length: 63 }, () => null)],
+      })
+      await connectedDatabase().query(`
+        UPDATE places SET drawing = $2::jsonb, drawing_state = 'complete',
+          drawing_description = 'A lit reading lamp.'
+        WHERE id = $1
+      `, [seeded.roomId, drawing])
+      const undrawnId = Number((await connectedDatabase().query<{ id: number }>(`
+        INSERT INTO places (parent_id, place_kind, name, description, owner_id)
+        VALUES ($1, 'place', 'Undrawn Room', 'no drawing yet', 1)
+        RETURNING id
+      `, [seeded.continentId])).rows[0]!.id)
+      const hiddenId = Number((await connectedDatabase().query<{ id: number }>(`
+        INSERT INTO places (parent_id, place_kind, name, description, owner_id,
+          drawing, drawing_state, drawing_description)
+        VALUES ($1, 'place', 'Hidden Room', 'drawn, then hidden', 1, $2::jsonb, 'complete', 'A lamp.')
+        RETURNING id
+      `, [seeded.continentId, drawing])).rows[0]!.id)
+      await connectedDatabase().query(`
+        INSERT INTO moderation_actions (target_type, target_id, action, actor_id, reason)
+        VALUES ('place', $1, 'remove', 1, 'test hold')
+      `, [hiddenId])
+
+      const directory = await readPublicDirectory()
+      const drawn = new Map(directory.places.map(place => [place.id, place.has_drawing]))
+      assert.equal(drawn.get(seeded.roomId), true)
+      assert.equal(drawn.get(undrawnId), false)
+      assert.equal(drawn.get(hiddenId), false)
+      assert.equal(drawn.get(seeded.continentId), false)
+
+      // The thumbnail route answers 404 exactly where the directory says false.
+      const { mountDrawingRoutes } = await import('../../src/drawings.ts')
+      const drawingApp = new Hono()
+      mountDrawingRoutes(drawingApp, {
+        database: { query: (text, params) => sql.query(text, params) },
+        authenticate: async () => null,
+      })
+      for (const [id, hasDrawing] of drawn) {
+        const response = await drawingApp.request(`/api/drawing/place/${id}/thumb.png`)
+        assert.equal(response.status === 404, hasDrawing !== true, `place ${id}: ${response.status}`)
+      }
     })
 
     await t.test('the protected world root can never be marked quiet', async () => {
