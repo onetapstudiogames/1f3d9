@@ -172,7 +172,7 @@ async function placeRecordQuiet(app: import('hono').Hono, roomId: number): Promi
 }
 
 // The served reference sentence for GET /api/window?view=directory rows, e.g.
-// Place entries contain only type: "place", stable id, parent_id, name, and quiet;
+// Place entries contain only type: "place", stable id, parent_id, name, quiet, and has_drawing;
 // resident entries contain only type: "resident", stable id, handle, and has_drawing.
 function directoryRowKeysFromReference(text: string): { place: string[]; resident: string[] } {
   const match = text.match(
