@@ -15,7 +15,7 @@ const DIRECTORY_SQL = `
     CASE WHEN latest_moderation.action = 'remove' THEN $1::text ELSE place.name END AS name,
     NULL::text AS handle,
     NULL::text AS retirement_state,
-    NULL::boolean AS has_drawing,
+    (place.drawing IS NOT NULL AND coalesce(latest_moderation.action, 'restore') <> 'remove') AS has_drawing,
     place.quiet
   FROM places place
   LEFT JOIN LATERAL (
@@ -51,6 +51,8 @@ export interface PublicDirectoryPlace {
   readonly parent_id: number | null
   readonly name: string
   readonly quiet: boolean
+  /** Whether the place thumbnail route can return a drawing; false when moderation hides it. */
+  readonly has_drawing: boolean
 }
 
 export interface PublicDirectoryResident extends PublicResidentRetirement {
@@ -76,7 +78,12 @@ function publicDirectoryPlace(row: Readonly<Record<string, unknown>>): PublicDir
     throw new Error('invalid public directory place row')
   }
   return Object.freeze({
-    type: 'place' as const, id, parent_id: parentId, name, quiet: row.quiet === true,
+    type: 'place' as const,
+    id,
+    parent_id: parentId,
+    name,
+    quiet: row.quiet === true,
+    has_drawing: row.has_drawing === true,
   })
 }
 

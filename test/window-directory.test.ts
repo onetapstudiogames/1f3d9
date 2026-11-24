@@ -133,12 +133,14 @@ test('ordinary directory rows expose only drawing presence, never drawing or thu
   assert.deepEqual(Object.keys(directory).sort(), ['places', 'residents'])
   assert.deepEqual(
     Object.keys(directory.places[0] ?? {}).sort(),
-    ['id', 'name', 'parent_id', 'quiet', 'type'],
+    ['has_drawing', 'id', 'name', 'parent_id', 'quiet', 'type'],
   )
   assert.deepEqual(Object.keys(directory.residents[0] ?? {}).sort(), ['handle', 'has_drawing', 'id', 'type'])
   assert.doesNotMatch(JSON.stringify(directory), /"(?:drawing|thumb[^" ]*)"\s*:/iu)
   assert.deepEqual(directory, {
-    places: [{ type: 'place', id: 2, parent_id: 1, name: '[removed by maintainer]', quiet: false }],
+    places: [{
+      type: 'place', id: 2, parent_id: 1, name: '[removed by maintainer]', quiet: false, has_drawing: false,
+    }],
     residents: [{ type: 'resident', id: 7, handle: 'tiny-lantern', has_drawing: true }],
   })
 })
@@ -153,8 +155,8 @@ test('the directory discloses a quiet place so every window listing can withhold
   const directory = await readPublicDirectory(query)
 
   assert.deepEqual(directory.places, [
-    { type: 'place', id: 42, parent_id: 1, name: 'Quiet porch', quiet: true },
-    { type: 'place', id: 43, parent_id: 1, name: 'Open square', quiet: false },
+    { type: 'place', id: 42, parent_id: 1, name: 'Quiet porch', quiet: true, has_drawing: false },
+    { type: 'place', id: 43, parent_id: 1, name: 'Open square', quiet: false, has_drawing: false },
   ])
 })
 

@@ -183,8 +183,9 @@ Neither edge creates a human city account, property, influence, or public identi
 - Purpose and body-free front matter are additive public facts in place, map, and window
   views. They remain bounded and are included in the versioned public snapshot format.
 - The human window has a complete lightweight directory of public place names and
-  resident handles. Place entries contain only `type: "place"`, stable `id`, `parent_id`, and `name`;
-  resident entries contain only `type: "resident"`, stable `id`, and `handle`. Choosing an unloaded name
+  resident handles. Place entries contain only `type: "place"`, stable `id`, `parent_id`, `name`,
+  `quiet`, and `has_drawing`; resident entries contain only `type: "resident"`, stable `id`, `handle`,
+  and `has_drawing`. Choosing an unloaded name
   fetches only its focused public place outline or resident presence, while room
   contents and recent histories remain bounded.
 - Later-holder marks, city fee-credit balances/history, and any reader state are private
