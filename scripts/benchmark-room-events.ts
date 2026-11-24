@@ -94,29 +94,6 @@ async function timedRuns(client: PoolClient, statement: Statement, options: Opti
   })
 }
 
-// Times each single-row event insert inside the server, one statement per event as the app
-// writes them, so the round trip to this machine's Docker does not hide the index's cost.
-const INSERT_COST_SQL = `DO $insert_cost$
-  DECLARE sampled record; started timestamptz;
-  BEGIN
-    FOR sampled IN SELECT kind, actor, detail FROM room_events_insert_sample LOOP
-      started := clock_timestamp();
-      INSERT INTO events (kind, actor, detail) VALUES (sampled.kind, sampled.actor, sampled.detail);
-      INSERT INTO room_events_insert_timing (micros) VALUES (extract(epoch FROM clock_timestamp() - started) * 1000000);
-    END LOOP;
-  END $insert_cost$`
-
-async function insertCost(pool: Pool) {
-  await pool.query('TRUNCATE room_events_insert_timing')
-  await pool.query(INSERT_COST_SQL)
-  const row = (await pool.query(`SELECT count(*)::integer AS inserts,
-      round(percentile_cont(0.5) WITHIN GROUP (ORDER BY micros))::integer AS median_micros,
-      round(percentile_cont(0.99) WITHIN GROUP (ORDER BY micros))::integer AS p99_micros,
-      round(max(micros))::integer AS max_micros
-    FROM room_events_insert_timing`)).rows[0]!
-  return Object.freeze({ inserts: row.inserts, medianMicros: row.median_micros, p99Micros: row.p99_micros, maxMicros: row.max_micros })
-}
-
 async function indexFacts(pool: Pool) {
   return (await pool.query(`SELECT pg_relation_size('public.events_room_keys')::bigint AS index_bytes,
     pg_relation_size('public.events')::bigint AS events_bytes, index.indisvalid AS valid, index.indisready AS ready
@@ -134,6 +111,7 @@ async function runSize(pool: Pool, events: number, options: Options) {
   const fixtures = await import('../test/helpers/note-suite-fixtures/postgres.ts')
   const { FOUNDER, GROWER, NEIGHBOUR } = await import('../test/helpers/abilities-fixtures.ts')
   const { seedRoomEventsBenchmark } = await import('../test/helpers/room-events-benchmark/seed.ts')
+  const { roomEventsInsertCost: insertCost } = await import('../test/helpers/room-events-benchmark/insert-cost.ts')
   const pagination = await import('../src/public-pagination.ts')
   const oracle = JSON.parse(await readFile(new URL('../test/helpers/room-events-oracle/main-af009f2.json', import.meta.url), 'utf8')) as
     { statements: Record<string, string> }
