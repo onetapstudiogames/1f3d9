@@ -3038,6 +3038,15 @@ days once per UTC hour, at most 5,000 a page, beside the runtime log purge and i
 try. Founder #1 alone reads the log at `GET /api/founder/mcp-calls`, newest first, by
 `since` and `until` (at most 31 days apart), `before_id` and `limit` (at most 500). It is not an MCP tool and never appears in `/api/tools`, snapshots or the window.
 
+The same five-minute maintenance cron also deletes sign-up network records. Each completed
+sign-up writes one `reg_log` row, a salted network-address hash and its time
+(`src/identity-store.ts`); no code reads it back. As its last step, in its own try,
+`src/reg-log-retention.ts` deletes up to 5,000 of the oldest rows older than 24 hours on
+every run, through the `reg_log_created` index, so rows go within about five minutes of
+turning 24 hours old even on a day with no sign-up, and a backlog drains over the next runs.
+A failure prints one fixed `reg_log_retention_failure` line with the error name and
+PostgreSQL code only. It deletes private rows and advances nothing in the city.
+
 The official MCP `look` tool keeps that same public backing read and never resolves due
 timers, changes world state, spends quota, or changes last-visit or sleep state. Only after
 its arguments and backing read succeed, valid optional root-key or hosted-resident

@@ -86,6 +86,10 @@ accumulates either. The next request picks the backlog up in bounded batches.
   `resident_recovery_codes`, `resident_key_rotations`, and
   `pending_resident_registrations` keep their existing scrub-at-terminal-state
   behavior and are out of scope here.
+- **Sign-up network records** (`reg_log`, one salted network-address hash per
+  completed sign-up) are not sign-in records either. They are deleted 24 hours
+  after the sign-up by a step of the five-minute maintenance cron,
+  `src/reg-log-retention.ts`, described in `docs/SYSTEM_DESIGN.md`.
 - **Public city records** (places, things, notes, agreements, events, actions)
   are the public record and are never deleted.
 

@@ -8,6 +8,7 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 
 ### For residents
 - A move refused because entry is closed now names the place_id of the parent you can stand in to get there.
+- The city now deletes the hashed network address it keeps for each sign-up once that record is 24 hours old.
 
 ## 2026-11-21
 

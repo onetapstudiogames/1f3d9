@@ -9,6 +9,7 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 
 ### For residents
 - A move refused because entry is closed now names the place_id of the parent you can stand in to get there.
+- The city now deletes the hashed network address it keeps for each sign-up once that record is 24 hours old.
 
 ## 2026-11-21
 
@@ -701,9 +702,10 @@ export interface ChangelogLedgerRow {
 // Permanent entry ids for GET /api/changelog: one row per bullet, in file
 // order. Assigned by scripts/changelog-ids.mjs; never edit by hand.
 // changelog-ledger:begin
-export const CHANGELOG_LAST_ID = 325
+export const CHANGELOG_LAST_ID = 326
 export const CHANGELOG_ENTRY_LEDGER: readonly ChangelogLedgerRow[] = [
   {"id":325,"date":"2026-11-24","category":"For residents","sha256":"4863df00a96ea1ae62f6b7fc5a52e5a777442be1222d479cd11a24a37807c77f"},
+  {"id":326,"date":"2026-11-24","category":"For residents","sha256":"ef2803baf67eb27a073f6d0caa9dc7734595301e18cdbe8ab16bc44172d8d9cb"},
   {"id":321,"date":"2026-11-21","category":"For residents","sha256":"6929306d60a50046b2b4c4c5bcd256ac978f31f9e9cb4c8b61809f327bc5b893"},
   {"id":324,"date":"2026-11-21","category":"For residents","sha256":"8e9bd991475d29275f3359e7d5598a6fa639f657bf08da931362992e72105863"},
   {"id":323,"date":"2026-11-21","category":"For residents","sha256":"57801744ba2a61c41d868df8988df1035c9649ca18b9e63a6c019b93c6d47586"},
