@@ -111,6 +111,8 @@ type RemoteMigration =
   | 'resident-retirement-write-locks'
   | 'events-totals-tally'
   | 'oauth-refresh-renewal'
+  | 'event-room-keys-function'
+  | 'events-room-keys-index'
 
 export type MigrationFile =
   | 'db/schema.sql'
@@ -150,6 +152,8 @@ export type MigrationFile =
   | 'db/migrations/20261109_resident_retirement_write_locks.sql'
   | 'db/migrations/20261112_events_totals_tally.sql'
   | 'db/migrations/20261118_oauth_refresh_renewal.sql'
+  | 'db/migrations/20261124_event_room_keys_function.sql'
+  | 'db/migrations/20261124_events_room_keys_index.sql'
   | 'db/migrations/20260816_payment_attempts.sql'
   | 'db/migrations/20260816_payment_response_replay.sql'
   | 'db/migrations/20260817_payment_response_body_replay.sql'
@@ -350,14 +354,21 @@ const REMOTE_MIGRATIONS: Readonly<Record<RemoteMigration, MigrationFile>> = {
   'resident-retirement-write-locks': 'db/migrations/20261109_resident_retirement_write_locks.sql',
   'events-totals-tally': 'db/migrations/20261112_events_totals_tally.sql',
   'oauth-refresh-renewal': 'db/migrations/20261118_oauth_refresh_renewal.sql',
+  'event-room-keys-function': 'db/migrations/20261124_event_room_keys_function.sql',
+  'events-room-keys-index': 'db/migrations/20261124_events_room_keys_index.sql',
 }
 const EVENTS_PRESENCE_INDEX_MIGRATION_FILE: MigrationFile =
   'db/migrations/20260821_events_presence_index.sql'
 const PUBLIC_SEARCH_INDEX_MIGRATION_FILE: MigrationFile =
   'db/migrations/20260821_public_search_indexes.sql'
+const EVENT_ROOM_KEYS_FUNCTION_MIGRATION_FILE: MigrationFile =
+  'db/migrations/20261124_event_room_keys_function.sql'
+const EVENTS_ROOM_KEYS_INDEX_MIGRATION_FILE: MigrationFile =
+  'db/migrations/20261124_events_room_keys_index.sql'
 const NONTRANSACTIONAL_MIGRATION_FILES = new Set<MigrationFile>([
   EVENTS_PRESENCE_INDEX_MIGRATION_FILE,
   PUBLIC_SEARCH_INDEX_MIGRATION_FILE,
+  EVENTS_ROOM_KEYS_INDEX_MIGRATION_FILE,
 ])
 
 function gazetteLiveDeployment(
@@ -1050,6 +1061,96 @@ export function eventsPresenceIndexRecoveryStatements(
   ])
 }
 
+export const EVENTS_ROOM_KEYS_INDEX_STATEMENT =
+  'CREATE INDEX CONCURRENTLY IF NOT EXISTS events_room_keys ON public.events USING gin (public.event_room_keys(detail)) WITH (fastupdate = off)'
+
+/** The key function the room keys index stores, as the catalog holds it. */
+export const EVENT_ROOM_KEYS_FUNCTION_STATE_QUERY = `
+  SELECT function.provolatile::text AS volatility, function.proparallel::text AS parallel,
+    function.proisstrict AS strict, pg_get_function_result(function.oid) AS result_type,
+    function.prosrc AS body
+  FROM pg_proc AS function
+  WHERE function.oid = to_regprocedure('public.event_room_keys(jsonb)')
+`
+
+export const EVENTS_ROOM_KEYS_INDEX_STATE_QUERY = `
+  SELECT index_relation.relname AS index_name,
+    table_relation.relname AS table_name,
+    index_catalog.indisvalid AS valid,
+    index_catalog.indisready AS ready,
+    pg_get_indexdef(index_relation.oid) AS definition
+  FROM pg_class AS index_relation
+  JOIN pg_namespace AS index_namespace
+    ON index_namespace.oid = index_relation.relnamespace
+  LEFT JOIN pg_index AS index_catalog
+    ON index_catalog.indexrelid = index_relation.oid
+  LEFT JOIN pg_class AS table_relation
+    ON table_relation.oid = index_catalog.indrelid
+  WHERE index_namespace.nspname = 'public'
+    AND index_relation.relname = 'events_room_keys'
+`
+
+// pg_get_indexdef names the function with its schema only when public is not on the
+// session's search path; both spellings are the one reviewed index.
+const EVENTS_ROOM_KEYS_INDEX_DEFINITIONS: readonly string[] = Object.freeze([
+  "CREATE INDEX events_room_keys ON public.events USING gin (event_room_keys(detail)) WITH (fastupdate=off)",
+  "CREATE INDEX events_room_keys ON public.events USING gin (public.event_room_keys(detail)) WITH (fastupdate=off)",
+])
+
+/** The function body the reviewed function migration installs, between its dollar quotes. */
+export function reviewedEventRoomKeysBody(functionDdl: string): string {
+  const quote = '$event_room_keys$'
+  const start = functionDdl.indexOf(quote)
+  const end = start < 0 ? -1 : functionDdl.indexOf(quote, start + quote.length)
+  if (start < 0 || end < 0) throw new Error('the room keys function migration has no reviewed function body')
+  return functionDdl.slice(start + quote.length, end)
+}
+
+/**
+ * The room keys index is built only over the reviewed key function: immutable, parallel
+ * safe, strict, returning text[], with the reviewed body. Anything else stops before the
+ * build, because the index would store keys by a rule nobody reviewed.
+ */
+export function assertReviewedEventRoomKeysFunction(
+  rows: readonly Readonly<Record<string, unknown>>[],
+  reviewedBody: string,
+): void {
+  if (rows.length !== 1) {
+    throw new Error('run the event-room-keys-function migration first: public.event_room_keys(jsonb) is missing')
+  }
+  const row = rows[0]!
+  if (row.volatility !== 'i' || row.parallel !== 's' || row.strict !== true || row.result_type !== 'text[]') {
+    throw new Error('public.event_room_keys(jsonb) must be immutable, parallel safe, strict and return text[]')
+  }
+  if (row.body !== reviewedBody) {
+    throw new Error('public.event_room_keys(jsonb) does not match the reviewed function body')
+  }
+}
+
+/**
+ * Keep an exact valid room keys index untouched. A failed concurrent build is safe to
+ * remove and retry; a same-named relation with any other definition fails closed.
+ */
+export function eventsRoomKeysIndexRecoveryStatements(
+  rows: readonly Readonly<Record<string, unknown>>[],
+  createStatement: string,
+): readonly string[] {
+  if (rows.length === 0) return Object.freeze([createStatement])
+  const row = rows[0]!
+  if (
+    rows.length !== 1 || row.index_name !== 'events_room_keys' || row.table_name !== 'events'
+    || typeof row.valid !== 'boolean' || typeof row.ready !== 'boolean'
+    || !EVENTS_ROOM_KEYS_INDEX_DEFINITIONS.includes(String(row.definition))
+  ) {
+    throw new Error('events_room_keys conflicts with the reviewed definition')
+  }
+  if (row.valid === true && row.ready === true) return Object.freeze([])
+  return Object.freeze([
+    'DROP INDEX CONCURRENTLY IF EXISTS public.events_room_keys',
+    createStatement,
+  ])
+}
+
 function normalizedExecutableStatement(statement: string): string {
   return statement
     .replace(/^\s*--.*$/gm, '')
@@ -1082,6 +1183,10 @@ export function prepareMigrationExecution(
       'CREATE INDEX CONCURRENTLY IF NOT EXISTS events_actor_at_desc ON public.events (actor, at DESC)'
     if (executableStatements.length !== 1 || executableStatements[0] !== expected) {
       throw new Error('events presence index migration does not match the reviewed concurrent-index statement')
+    }
+  } else if (migrationFile === EVENTS_ROOM_KEYS_INDEX_MIGRATION_FILE) {
+    if (executableStatements.length !== 1 || executableStatements[0] !== EVENTS_ROOM_KEYS_INDEX_STATEMENT) {
+      throw new Error('events room keys index migration does not match the reviewed concurrent-index statement')
     }
   } else {
     const expected = [
@@ -1131,6 +1236,31 @@ async function applyEventsPresenceIndexMigration(
   return recoveryStatements.length
 }
 
+async function applyEventsRoomKeysIndexMigration(
+  client: Client,
+  createStatement: string,
+): Promise<number> {
+  const reviewedBody = reviewedEventRoomKeysBody(readFileSync(
+    new URL(`../${EVENT_ROOM_KEYS_FUNCTION_MIGRATION_FILE}`, import.meta.url), 'utf8'))
+  const installed = await client.query(EVENT_ROOM_KEYS_FUNCTION_STATE_QUERY)
+  assertReviewedEventRoomKeysFunction(installed.rows as readonly Record<string, unknown>[], reviewedBody)
+  const before = await client.query(EVENTS_ROOM_KEYS_INDEX_STATE_QUERY)
+  const recoveryStatements = eventsRoomKeysIndexRecoveryStatements(
+    before.rows as readonly Record<string, unknown>[],
+    createStatement,
+  )
+  for (const statement of recoveryStatements) await client.query(statement)
+
+  const after = await client.query(EVENTS_ROOM_KEYS_INDEX_STATE_QUERY)
+  if (eventsRoomKeysIndexRecoveryStatements(
+    after.rows as readonly Record<string, unknown>[],
+    createStatement,
+  ).length !== 0) {
+    throw new Error('events_room_keys did not become valid and ready')
+  }
+  return recoveryStatements.length
+}
+
 async function applyPublicSearchIndexMigration(
   client: Client,
   statements: readonly string[],
@@ -1176,9 +1306,13 @@ export async function applyMigration(
       for (const statement of execution.sessionStatements) {
         await client.query(statement)
       }
-      return migrationFile === EVENTS_PRESENCE_INDEX_MIGRATION_FILE
-        ? await applyEventsPresenceIndexMigration(client, execution.statements[0]!)
-        : await applyPublicSearchIndexMigration(client, execution.statements)
+      if (migrationFile === EVENTS_PRESENCE_INDEX_MIGRATION_FILE) {
+        return await applyEventsPresenceIndexMigration(client, execution.statements[0]!)
+      }
+      if (migrationFile === EVENTS_ROOM_KEYS_INDEX_MIGRATION_FILE) {
+        return await applyEventsRoomKeysIndexMigration(client, execution.statements[0]!)
+      }
+      return await applyPublicSearchIndexMigration(client, execution.statements)
     } finally {
       await client.end()
     }

@@ -222,10 +222,16 @@ export interface PublicEventFilters {
   readonly afterId?: number | null
 }
 
-function publicEventFilter(includeDescendants: boolean): string {
-  const numericPlace = (field: string): string => includeDescendants
+// Where a thing, note or offered room is "in the room" for a place read: the exact room
+// ($3) or, with includeDescendants, the room and every room below it now.
+function numericPlaceSql(includeDescendants: boolean, field: string): string {
+  return includeDescendants
     ? `${field} IN (SELECT id FROM selected_places)`
     : `${field} = $3::integer`
+}
+
+function publicEventFilter(includeDescendants: boolean): string {
+  const numericPlace = (field: string): string => numericPlaceSql(includeDescendants, field)
   const textPlace = (field: string): string => includeDescendants
     ? `${field} IN (SELECT id::text FROM selected_places)`
     : `${field} = ($3::integer)::text`
@@ -381,14 +387,18 @@ export const PUBLIC_EVENT_TEXT_BYTES_SQL = `octet_length(coalesce(event.detail->
  * home, shared with the kept events tally (src/events-totals-tally.ts), which counts
  * each event's text bytes and feed room the same way.
  */
-export const PUBLIC_EVENT_TOTALS_COLUMNS_SQL = `count(*) FILTER (WHERE feed.feed_room_id IS NULL)::integer AS total_items,
+function eventTotalsColumnsSql(textBytes: string, feedRoom: string): string {
+  return `count(*) FILTER (WHERE ${feedRoom} IS NULL)::integer AS total_items,
          coalesce(sum(
-           ${PUBLIC_EVENT_TEXT_BYTES_SQL}
-         ) FILTER (WHERE feed.feed_room_id IS NULL), 0)::bigint AS total_text_bytes,
-         count(*) FILTER (WHERE feed.feed_room_id IS NOT NULL)::integer AS left_out_feed_rooms,
-         array_agg(DISTINCT feed.feed_room_id) FILTER (
-           WHERE feed.feed_room_id IS NOT NULL
+           ${textBytes}
+         ) FILTER (WHERE ${feedRoom} IS NULL), 0)::bigint AS total_text_bytes,
+         count(*) FILTER (WHERE ${feedRoom} IS NOT NULL)::integer AS left_out_feed_rooms,
+         array_agg(DISTINCT ${feedRoom}) FILTER (
+           WHERE ${feedRoom} IS NOT NULL
          ) AS left_out_feed_room_ids`
+}
+
+export const PUBLIC_EVENT_TOTALS_COLUMNS_SQL = eventTotalsColumnsSql(PUBLIC_EVENT_TEXT_BYTES_SQL, 'feed.feed_room_id')
 
 // The totals a further page leaves uncounted: the list's own totals came with its first page.
 const UNCOUNTED_EVENT_TOTALS_SQL = `SELECT 0::integer AS total_items, 0::bigint AS total_text_bytes,
@@ -398,6 +408,108 @@ type EventTotals = Readonly<{ kind: 'counted' | 'uncounted' } | { kind: 'kept'; 
 const COUNTED_EVENT_TOTALS: EventTotals = Object.freeze({ kind: 'counted' })
 const UNCOUNTED_EVENT_TOTALS: EventTotals = Object.freeze({ kind: 'uncounted' })
 
+const EVENT_ROWS_SELECT_SQL = `SELECT page.id, page.change_id, page.at, page.kind, page.actor, page.detail,
+       page.thing_has_drawing,
+       totals.total_items, totals.total_text_bytes,
+       totals.left_out_feed_rooms, totals.left_out_feed_room_ids`
+
+const SELECTED_PLACES_SQL = `selected_places AS (
+       SELECT place.id FROM places place WHERE place.id = $3::integer
+       UNION
+       SELECT child.id FROM places child
+       JOIN selected_places selected ON child.parent_id = selected.id
+     )`
+
+/**
+ * One room's events read (place_id, or within_place_id with the rooms below it). It keeps
+ * exactly the events publicEventFilter keeps, in the same order with the same totals, but
+ * finds its candidates through the GIN index events_room_keys over
+ * public.event_room_keys(detail) (db/migrations/20261124_event_room_keys_function.sql)
+ * instead of checking every event in the city.
+ *
+ * room_keys lists the room's keys now: the selected rooms, the things there now and not
+ * withdrawn, the notes there now, and the offers on those rooms and things, by the same
+ * comparisons as publicEventFilter. An event's own keys list what its detail names, so
+ * every event the filter keeps shares a key with room_keys: the index only narrows which
+ * events the filter looks at. Moves, withdrawals, endings, offers, the room tree, feed
+ * rooms and moderation are all still read when the statement runs. Each key is looked up
+ * on its own, because one index lookup for a list of keys gets slower with every key
+ * (a busy room has a key for each of its notes and things).
+ *
+ * room_events holds each kept event once, with its feed room, change id and text bytes;
+ * the totals count it, and the page takes its newest rows before reading their details.
+ */
+function roomEventsStatement(includeDescendants: boolean, totalsMode: EventTotals): string {
+  const numericPlace = (field: string): string => numericPlaceSql(includeDescendants, field)
+  const rooms = includeDescendants ? 'selected_places room(id)' : '(VALUES ($3::integer)) room(id)'
+  const totals = totalsMode.kind === 'counted'
+    ? `SELECT ${eventTotalsColumnsSql('room_event.text_bytes', 'room_event.feed_room_id')}
+       FROM room_events room_event`
+    : UNCOUNTED_EVENT_TOTALS_SQL
+  return `/* public:events */
+     WITH ${includeDescendants ? `RECURSIVE ${SELECTED_PLACES_SQL}, ` : ''}room_keys AS (
+       SELECT ARRAY(
+         SELECT 'p'::text || room.id::text FROM ${rooms}
+         UNION ALL
+         SELECT 't'::text || thing.id::text FROM things thing
+         WHERE ${numericPlace('thing.place_id')} AND thing.withdrawn_at IS NULL
+         UNION ALL
+         SELECT 'n'::text || note.id::text FROM notes note
+         WHERE ${numericPlace('note.place_id')}
+         UNION ALL
+         SELECT 'o'::text || offer.id::text FROM transfer_offers offer
+         WHERE (offer.asset_type = 'place' AND ${numericPlace('offer.asset_id')})
+           OR (offer.asset_type = 'thing' AND EXISTS (
+             SELECT 1 FROM things thing
+             WHERE thing.id = offer.asset_id
+               AND ${numericPlace('thing.place_id')}
+               AND thing.withdrawn_at IS NULL))
+       )::text[] AS keys
+     ), room_events AS MATERIALIZED (
+       SELECT event.id, feed.feed_room_id, change.change_id,
+         ${PUBLIC_EVENT_TEXT_BYTES_SQL} AS text_bytes
+       FROM (
+         SELECT DISTINCT keyed.id
+         FROM unnest((SELECT room_keys.keys FROM room_keys)) room_key(key)
+         CROSS JOIN LATERAL (
+           SELECT keyed_event.id FROM events keyed_event
+           WHERE public.event_room_keys(keyed_event.detail) && ARRAY[room_key.key]
+         ) keyed
+       ) candidate
+       CROSS JOIN LATERAL (
+         -- OFFSET 0 keeps this one lookup by id per candidate, so the filter below runs on
+         -- the candidates only and never on a scan of all events of one kind.
+         SELECT event.* FROM events event WHERE event.id = candidate.id OFFSET 0
+       ) event
+       ${PUBLIC_EVENT_FEED_ROOM_JOIN}
+       LEFT JOIN public_change_log change ON change.event_id = event.id
+       WHERE ${publicEventFilter(includeDescendants)}
+     ), totals AS (
+       ${totals}
+     )
+     ${EVENT_ROWS_SELECT_SQL}
+     FROM totals
+     LEFT JOIN LATERAL (
+       SELECT event.id, room_event.change_id::text AS change_id,
+         event.at, event.kind, event.actor,
+         ${publicActivityEventDetailSql('event', '$3::integer')} AS detail,
+         event_thing.has_drawing AS thing_has_drawing
+       FROM (
+         SELECT room_event.id, room_event.change_id FROM room_events room_event
+         WHERE room_event.feed_room_id IS NULL
+           AND room_event.change_id IS NOT NULL
+           AND ($4::integer IS NULL OR room_event.id < $4::integer)
+           AND ($7::integer IS NULL OR room_event.id > $7::integer)
+         ORDER BY room_event.id DESC
+         LIMIT $5::integer
+       ) room_event
+       JOIN events event ON event.id = room_event.id
+       ${PUBLIC_EVENT_THING_DRAWING_JOIN_SQL}
+       ORDER BY event.id DESC
+     ) page ON TRUE
+     ORDER BY page.id DESC NULLS LAST`
+}
+
 async function queryEventRows(
   query: PublicQueryExecutor,
   filters: PublicEventFilters,
@@ -405,6 +517,15 @@ async function queryEventRows(
   totalsMode: EventTotals,
 ): Promise<readonly Record<string, unknown>[]> {
   const includeDescendants = filters.includeDescendants === true
+  const params = [
+    filters.kind, filters.actor, filters.placeId, page.cursor, page.fetchLimit,
+    filters.withinSeconds ?? null, filters.afterId ?? null,
+  ]
+  // A one-room read finds its events through the room keys; every other read's text
+  // stays exactly as it was. The kept totals never answer a room read.
+  if (filters.placeId != null && totalsMode.kind !== 'kept') {
+    return await query(roomEventsStatement(includeDescendants, totalsMode), params)
+  }
   const eventFilter = includeDescendants ? publicEventFilter(true) : PUBLIC_EVENT_FILTER
   const withClause = includeDescendants
     ? `WITH RECURSIVE selected_places AS (
@@ -451,10 +572,7 @@ async function queryEventRows(
        LIMIT $5::integer
      ) page ON TRUE
      ORDER BY page.id DESC NULLS LAST`,
-    [
-      filters.kind, filters.actor, filters.placeId, page.cursor, page.fetchLimit,
-      filters.withinSeconds ?? null, filters.afterId ?? null,
-    ],
+    params,
   )
 }
 

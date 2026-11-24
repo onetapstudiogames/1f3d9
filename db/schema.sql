@@ -3449,6 +3449,49 @@ CREATE INDEX IF NOT EXISTS events_at ON events (at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS events_kind_id_desc ON events (kind, id DESC);
 CREATE INDEX IF NOT EXISTS events_actor_at_desc ON events (actor, at DESC);
 
+-- One room's events read finds its candidate events through events_room_keys; the key
+-- rule and why the read's answer cannot change are in
+-- db/migrations/20261124_event_room_keys_function.sql. The index stores the function's
+-- results, so the function is never edited in place: a new rule is a new function name.
+CREATE OR REPLACE FUNCTION public.event_room_keys(detail jsonb)
+RETURNS text[]
+LANGUAGE sql
+IMMUTABLE
+STRICT
+PARALLEL SAFE
+AS $event_room_keys$
+  SELECT coalesce(array_agg(DISTINCT key.value), '{}'::text[])
+  FROM (
+    SELECT CASE WHEN named.value ~ '^[1-9][0-9]{0,9}$' THEN 'p'::text || named.value END
+    FROM (VALUES
+      (detail->>'place_id'),
+      (detail->>'from_place_id'),
+      (detail->>'to_place_id'),
+      (detail->>'hinge_to'),
+      (CASE WHEN detail->>'asset_type' = 'place' THEN detail->>'asset_id' END),
+      (CASE WHEN detail->>'type' = 'place' THEN detail->>'id' END)
+    ) named(value)
+    UNION ALL
+    SELECT CASE WHEN outcome->>'place_id' ~ '^[1-9][0-9]{0,9}$'
+      THEN 'p'::text || (outcome->>'place_id') END
+    FROM jsonb_array_elements(CASE
+      WHEN jsonb_typeof(detail->'applied_public_activity') = 'array'
+      THEN detail->'applied_public_activity' ELSE '[]'::jsonb END) outcome
+    UNION ALL
+    SELECT CASE WHEN named.value ~ '^[0-9]{1,9}$'
+      THEN named.prefix || ((named.value)::integer)::text END
+    FROM (VALUES
+      ('t'::text, detail->>'thing_id'),
+      ('t'::text, CASE WHEN detail->>'asset_type' = 'thing' THEN detail->>'asset_id' END),
+      ('t'::text, CASE WHEN detail->>'type' = 'thing' THEN detail->>'id' END),
+      ('n'::text, detail->>'note_id'),
+      ('o'::text, detail->>'offer_id')
+    ) named(prefix, value)
+  ) key(value)
+  WHERE key.value IS NOT NULL
+$event_room_keys$;
+CREATE INDEX IF NOT EXISTS events_room_keys ON public.events USING gin (public.event_room_keys(detail)) WITH (fastupdate = off);
+
 -- Public history is append-only. Mutable identity/quota/property rows are excluded,
 -- their changes are represented by immutable revisions, transfers, and events.
 CREATE OR REPLACE FUNCTION deny_history_mutation() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN RAISE EXCEPTION '% is append-only', TG_TABLE_NAME USING ERRCODE = '55000'; END$$;
