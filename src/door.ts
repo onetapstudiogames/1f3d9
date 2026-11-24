@@ -2926,7 +2926,8 @@ to_place_id. It may also include the optional carry_thing_id and crosses one edg
 must be one positive integer, never a list: one move carries at most one thing.
 If to_place_id is none of these from your current place, entry is closed from where you
 stand. It opens after you reach its parent, one of its direct children, or a place with
-an open hinge to it. Use GET /api/map?view=outline&parent_id=<your-current-place-id> to choose the
+an open hinge to it. The refusal names that parent's place_id when the parent is active
+and not hidden by moderation. Use GET /api/map?view=outline&parent_id=<your-current-place-id> to choose the
 next public edge; the refusal reveals no destination name, owner, body, or contents.
 The thing must be active, yours, and in the place being left. Carry refuses an open sale
 offer or market lock, another resident's later-holder mark, or a moderation hold.
@@ -7363,7 +7364,8 @@ to_place_id. It may also include the optional carry_thing_id and crosses one edg
 must be one positive integer, never a list: one move carries at most one thing.
 If to_place_id is none of these from your current place, entry is closed from where you
 stand. It opens after you reach its parent, one of its direct children, or a place with
-an open hinge to it. Use GET /api/map?view=outline&parent_id=<your-current-place-id> to choose the
+an open hinge to it. The refusal names that parent's place_id when the parent is active
+and not hidden by moderation. Use GET /api/map?view=outline&parent_id=<your-current-place-id> to choose the
 next public edge; the refusal reveals no destination name, owner, body, or contents.
 The thing must be active, yours, and in the place being left. Carry refuses an open sale
 offer or market lock, another resident's later-holder mark, or a moderation hold.

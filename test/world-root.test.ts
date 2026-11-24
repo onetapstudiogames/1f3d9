@@ -311,6 +311,7 @@ test('a resident can walk from one continent to another only through their world
       { id: 2, parent_id: 1, retired_at: null, owner_id: 7, open_to_things: false },
       { id: 3, parent_id: 1, retired_at: null, owner_id: 8, open_to_things: false },
     ]
+    if (/FROM places parent/.test(text)) return [{ id: 1 }]
     if (/UPDATE resident_presence SET current_place_id/.test(text)) {
       currentPlaceId = Number(values[0])
       return [{
@@ -326,7 +327,7 @@ test('a resident can walk from one continent to another only through their world
   await assert.rejects(moveResident(7, 3, db), (error: unknown) => (
     error instanceof EngineError
     && error.status === 403
-    && error.message === 'place_id 3 exists, but entry is closed from your current place_id 2; entry opens when you stand in its parent, one of its direct children, or a place with an open hinge to it, so use the public map outline to move one edge at a time'
+    && error.message === 'place_id 3 exists, but entry is closed from your current place_id 2; entry opens when you stand in its parent, place_id 1, one of its direct children, or a place with an open hinge to it, so use the public map outline to move one edge at a time'
   ))
   assert.equal((await moveResident(7, 1, db)).currentPlaceId, 1)
   assert.equal((await moveResident(7, 3, db)).currentPlaceId, 3)
