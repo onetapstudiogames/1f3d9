@@ -94,20 +94,27 @@ async function timedRuns(client: PoolClient, statement: Statement, options: Opti
   })
 }
 
-async function insertCost(pool: Pool, samples: readonly Readonly<{ kind: string; actor: string; detail: unknown }>[]) {
-  const client = await pool.connect()
-  try {
-    const times: number[] = []
-    for (const event of samples) {
-      const started = performance.now()
-      await client.query('INSERT INTO events (kind, actor, detail) VALUES ($1, $2, $3::jsonb)', [event.kind, event.actor, JSON.stringify(event.detail)])
-      times.push((performance.now() - started) * 1000)
-    }
-    const round = (value: number) => Math.round(value)
-    return Object.freeze({ inserts: times.length, medianMicros: round(quantile(times, 0.5)), p99Micros: round(quantile(times, 0.99)), maxMicros: round(sorted(times).at(-1)!) })
-  } finally {
-    client.release()
-  }
+// Times each single-row event insert inside the server, one statement per event as the app
+// writes them, so the round trip to this machine's Docker does not hide the index's cost.
+const INSERT_COST_SQL = `DO $insert_cost$
+  DECLARE sampled record; started timestamptz;
+  BEGIN
+    FOR sampled IN SELECT kind, actor, detail FROM room_events_insert_sample LOOP
+      started := clock_timestamp();
+      INSERT INTO events (kind, actor, detail) VALUES (sampled.kind, sampled.actor, sampled.detail);
+      INSERT INTO room_events_insert_timing (micros) VALUES (extract(epoch FROM clock_timestamp() - started) * 1000000);
+    END LOOP;
+  END $insert_cost$`
+
+async function insertCost(pool: Pool) {
+  await pool.query('TRUNCATE room_events_insert_timing')
+  await pool.query(INSERT_COST_SQL)
+  const row = (await pool.query(`SELECT count(*)::integer AS inserts,
+      round(percentile_cont(0.5) WITHIN GROUP (ORDER BY micros))::integer AS median_micros,
+      round(percentile_cont(0.99) WITHIN GROUP (ORDER BY micros))::integer AS p99_micros,
+      round(max(micros))::integer AS max_micros
+    FROM room_events_insert_timing`)).rows[0]!
+  return Object.freeze({ inserts: row.inserts, medianMicros: row.median_micros, p99Micros: row.p99_micros, maxMicros: row.max_micros })
 }
 
 async function indexFacts(pool: Pool) {
@@ -181,18 +188,24 @@ async function runSize(pool: Pool, events: number, options: Options) {
   } finally {
     client.release()
   }
-  const sample = (await pool.query<{ kind: string; actor: string; detail: unknown }>(
-    `SELECT kind, actor, detail FROM events ORDER BY hashtext(id::text) LIMIT $1`, [options.inserts])).rows
-  await pool.query('DROP INDEX public.events_room_keys')
-  const noIndex = await insertCost(pool, sample)
-  await buildIndex(pool, 'off')
-  const fastupdateOff = await insertCost(pool, sample)
-  const fastupdateOnBuildMs = await buildIndex(pool, 'on')
-  const fastupdateOn = await insertCost(pool, sample)
+  // The seeded mix, in a stable random order; each setting runs twice, alternating.
+  await pool.query(`CREATE TABLE room_events_insert_sample AS
+    SELECT kind, actor, detail FROM events ORDER BY hashtext(id::text) LIMIT ${options.inserts}`)
+  await pool.query('CREATE TABLE room_events_insert_timing (micros double precision NOT NULL)')
+  const writeCost: Record<string, unknown>[] = []
+  let fastupdateOnBuildMs = 0
+  for (const round of [1, 2]) {
+    await pool.query('DROP INDEX public.events_room_keys')
+    writeCost.push({ round, setting: 'no index', ...await insertCost(pool) })
+    await buildIndex(pool, 'off')
+    writeCost.push({ round, setting: 'fastupdate off', ...await insertCost(pool) })
+    fastupdateOnBuildMs = await buildIndex(pool, 'on')
+    writeCost.push({ round, setting: 'fastupdate on', ...await insertCost(pool) })
+  }
   await buildIndex(pool, 'off')
   return Object.freeze({
     facts, rooms, seedMs, index: { buildMs, fastupdateOnBuildMs, ...index },
-    writeCost: { noIndex, fastupdateOff, fastupdateOn }, results,
+    writeCost, results,
   })
 }
 

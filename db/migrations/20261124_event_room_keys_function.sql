@@ -17,44 +17,58 @@ SET LOCAL statement_timeout = '120s';
 -- Everything that can change (where a thing or note is now, withdrawals, offers, the room
 -- tree, feed rooms, moderation) is still checked by the read itself, so the index only
 -- narrows the events it looks at and never changes the answer.
+-- It is PL/pgSQL with no queries inside, so each event insert pays a few microseconds for
+-- it; a SQL function with subqueries is planned again for every insert statement, which
+-- measured about ten times the cost per insert.
 -- The index stores this function's results, so the function is never edited in place: a
 -- different key rule ships under a new function name with a new index.
 CREATE OR REPLACE FUNCTION public.event_room_keys(detail jsonb)
 RETURNS text[]
-LANGUAGE sql
+LANGUAGE plpgsql
 IMMUTABLE
 STRICT
 PARALLEL SAFE
 AS $event_room_keys$
-  SELECT coalesce(array_agg(DISTINCT key.value), '{}'::text[])
-  FROM (
-    SELECT CASE WHEN named.value ~ '^[1-9][0-9]{0,9}$' THEN 'p'::text || named.value END
-    FROM (VALUES
-      (detail->>'place_id'),
-      (detail->>'from_place_id'),
-      (detail->>'to_place_id'),
-      (detail->>'hinge_to'),
-      (CASE WHEN detail->>'asset_type' = 'place' THEN detail->>'asset_id' END),
-      (CASE WHEN detail->>'type' = 'place' THEN detail->>'id' END)
-    ) named(value)
-    UNION ALL
-    SELECT CASE WHEN outcome->>'place_id' ~ '^[1-9][0-9]{0,9}$'
-      THEN 'p'::text || (outcome->>'place_id') END
-    FROM jsonb_array_elements(CASE
-      WHEN jsonb_typeof(detail->'applied_public_activity') = 'array'
-      THEN detail->'applied_public_activity' ELSE '[]'::jsonb END) outcome
-    UNION ALL
-    SELECT CASE WHEN named.value ~ '^[0-9]{1,9}$'
-      THEN named.prefix || ((named.value)::integer)::text END
-    FROM (VALUES
-      ('t'::text, detail->>'thing_id'),
-      ('t'::text, CASE WHEN detail->>'asset_type' = 'thing' THEN detail->>'asset_id' END),
-      ('t'::text, CASE WHEN detail->>'type' = 'thing' THEN detail->>'id' END),
-      ('n'::text, detail->>'note_id'),
-      ('o'::text, detail->>'offer_id')
-    ) named(prefix, value)
-  ) key(value)
-  WHERE key.value IS NOT NULL
+DECLARE
+  keys text[] := '{}'::text[];
+  outcomes jsonb := detail->'applied_public_activity';
+  named text;
+  key text;
+  entry integer;
+BEGIN
+  FOREACH named IN ARRAY ARRAY[
+    detail->>'place_id', detail->>'from_place_id', detail->>'to_place_id', detail->>'hinge_to',
+    CASE WHEN detail->>'asset_type' = 'place' THEN detail->>'asset_id' END,
+    CASE WHEN detail->>'type' = 'place' THEN detail->>'id' END
+  ]::text[] LOOP
+    IF named ~ '^[1-9][0-9]{0,9}$' THEN
+      key := 'p'::text || named;
+      IF NOT key = ANY(keys) THEN keys := keys || key; END IF;
+    END IF;
+  END LOOP;
+  IF jsonb_typeof(outcomes) = 'array' THEN
+    FOR entry IN 0 .. jsonb_array_length(outcomes) - 1 LOOP
+      named := outcomes->entry->>'place_id';
+      IF named ~ '^[1-9][0-9]{0,9}$' THEN
+        key := 'p'::text || named;
+        IF NOT key = ANY(keys) THEN keys := keys || key; END IF;
+      END IF;
+    END LOOP;
+  END IF;
+  FOREACH named IN ARRAY ARRAY[
+    't' || (detail->>'thing_id'),
+    't' || CASE WHEN detail->>'asset_type' = 'thing' THEN detail->>'asset_id' END,
+    't' || CASE WHEN detail->>'type' = 'thing' THEN detail->>'id' END,
+    'n' || (detail->>'note_id'),
+    'o' || (detail->>'offer_id')
+  ]::text[] LOOP
+    IF named ~ '^[tno][0-9]{1,9}$' THEN
+      key := left(named, 1) || ((substr(named, 2))::integer)::text;
+      IF NOT key = ANY(keys) THEN keys := keys || key; END IF;
+    END IF;
+  END LOOP;
+  RETURN keys;
+END
 $event_room_keys$;
 
 DO $event_room_keys_check$

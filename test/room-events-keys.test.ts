@@ -86,7 +86,7 @@ test('a one room read keeps today\'s filter word for word and adds only the room
 test('the room keys function migration is transactional, exact and refuses to replace an indexed body', () => {
   const execution = prepareMigrationExecution(functionFile, functionDdl)
   assert.equal(execution.mode, 'transactional')
-  assert.match(functionDdl, /CREATE OR REPLACE FUNCTION public\.event_room_keys\(detail jsonb\)\s+RETURNS text\[\]\s+LANGUAGE sql\s+IMMUTABLE\s+STRICT\s+PARALLEL SAFE/u)
+  assert.match(functionDdl, /CREATE OR REPLACE FUNCTION public\.event_room_keys\(detail jsonb\)\s+RETURNS text\[\]\s+LANGUAGE plpgsql\s+IMMUTABLE\s+STRICT\s+PARALLEL SAFE/u)
   assert.match(functionDdl, /never edit the key function in place/u)
   assert.doesNotMatch(functionDdl, /\b(?:DROP|ALTER TABLE|UPDATE|DELETE|TRUNCATE|CREATE INDEX)\b/u)
   const schema = read('db/schema.sql')
