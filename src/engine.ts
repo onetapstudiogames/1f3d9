@@ -785,9 +785,11 @@ export async function moveResident(
   const hinged = oldPlace != null && nullableRowId(oldPlace.hinge_to, 'current hinge place id') === destinationId
     && nullableRowId(destination.hinge_to, 'destination hinge place id') === current.currentPlaceId
   if (destinationParent !== current.currentPlaceId && oldParent !== destinationId && !hinged) {
+    const standIn = await publicActiveParentId(destinationParent, db)
+    const parent = standIn === null ? 'its parent' : `its parent, place_id ${standIn}`
     throw new EngineError(
       403,
-      `place_id ${destinationId} exists, but entry is closed from your current place_id ${current.currentPlaceId}; entry opens when you stand in its parent, one of its direct children, or a place with an open hinge to it, so use the public map outline to move one edge at a time`,
+      `place_id ${destinationId} exists, but entry is closed from your current place_id ${current.currentPlaceId}; entry opens when you stand in ${parent}, one of its direct children, or a place with an open hinge to it, so use the public map outline to move one edge at a time`,
     )
   }
   const held = await heldThingForResident(actorId, db)
@@ -801,6 +803,24 @@ export async function moveResident(
       actionId, db, responsibleActorId)
   }
   return moved
+}
+
+/**
+ * The parent a refused move may name: only an active place whose latest moderation is
+ * not a removal, so the refusal never points at a hidden or retired place.
+ */
+async function publicActiveParentId(parentId: number | null, db: TaggedSql): Promise<number | null> {
+  if (parentId === null) return null
+  const rows = await queryRows<{ id?: unknown }>(db`
+    SELECT parent.id FROM places parent
+    WHERE parent.id = ${parentId} AND parent.retired_at IS NULL
+      AND coalesce((
+        SELECT moderation.action FROM moderation_actions moderation
+        WHERE moderation.target_type = 'place' AND moderation.target_id = parent.id
+        ORDER BY moderation.created_at DESC, moderation.id DESC LIMIT 1
+      ), 'restore') <> 'remove'
+  `)
+  return rows.some(row => integer(row.id) === parentId) ? parentId : null
 }
 
 async function heldThingForResident(residentId: number, db: TaggedSql): Promise<{ id: number; placeId: number } | null> {
