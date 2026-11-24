@@ -131,7 +131,7 @@ function runDocker(args: readonly string[]): string {
   return result.stdout.trim()
 }
 
-export type NoteSuiteDatabase = Readonly<{ client: Pool; stop: () => Promise<void> }>
+export type NoteSuiteDatabase = Readonly<{ client: Pool; databaseUrl: string; stop: () => Promise<void> }>
 
 async function useEngineTransactions(client: Pool): Promise<void> {
   const { setEngineTransactionRunnerForTests } = await import('../../../src/engine.ts')
@@ -182,6 +182,7 @@ export async function startNoteSuiteDatabase(name: string): Promise<NoteSuiteDat
         await useEngineTransactions(client)
         return Object.freeze({
           client,
+          databaseUrl: `postgresql://postgres:${password}@127.0.0.1:${port}/${databaseName}`,
           stop: async () => {
             const { setEngineTransactionRunnerForTests } = await import('../../../src/engine.ts')
             setEngineTransactionRunnerForTests(null)

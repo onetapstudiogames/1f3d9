@@ -482,6 +482,8 @@ const READ_SITES: Readonly<Record<string, ReadDecision>> = Object.freeze({
   'src/public-pagination.ts publicEventFilter SELECT#2': 'exempt: filters events by place; events are history',
   'src/public-pagination.ts publicEventFilter SELECT#3': 'exempt: filters events by place; events are history',
   'src/public-pagination.ts publicEventFilter SELECT#4': 'exempt: filters events by place; events are history',
+  'src/public-pagination.ts roomEventsStatement SELECT#1': 'exempt: room keys for events by place; events are history',
+  'src/public-pagination.ts roomEventsStatement SELECT#2': 'exempt: room keys for events by place; events are history',
   'src/public-pagination.ts loadBudgetedPublicPlaceCollectionRows SELECT#1': 'short: place thing rows with ends, byte-limited page',
   'src/public-pagination.ts loadPublicPlaceCollectionRows SELECT#1': 'short: place thing rows with ends',
   'src/public-records.ts loadPublicThingRecord SELECT#1': 'full: the thing read, with ending through readThingEnding',
