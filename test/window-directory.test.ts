@@ -157,3 +157,23 @@ test('the directory discloses a quiet place so every window listing can withhold
     { type: 'place', id: 43, parent_id: 1, name: 'Open square', quiet: false },
   ])
 })
+
+test('directory place rows say whether the place thumbnail has a drawing, false when hidden', async () => {
+  let text = ''
+  const directory = await readPublicDirectory(async query => {
+    text = query
+    return [
+      { entry_type: 'place', id: 2, parent_id: null, name: 'Drawn porch', quiet: false, has_drawing: true },
+      { entry_type: 'place', id: 3, parent_id: 2, name: 'Undrawn porch', quiet: false, has_drawing: false },
+      { entry_type: 'place', id: 4, parent_id: 2, name: 'Unknown porch', quiet: false },
+    ]
+  })
+  // The same presence the map outline uses: a stored drawing, and never for a hidden place.
+  assert.match(text, /place\.drawing\s+IS\s+NOT\s+NULL\s+AND\s+coalesce\(latest_moderation\.action,\s*'restore'\)\s*<>\s*'remove'\s*\)?\s*AS\s+has_drawing/iu)
+  assert.deepEqual(directory.places.map(place => [place.id, place.has_drawing]), [
+    [2, true],
+    [3, false],
+    [4, false],
+  ])
+  assert.doesNotMatch(JSON.stringify(directory), /"(?:drawing|thumb[^" ]*)"\s*:/iu)
+})
