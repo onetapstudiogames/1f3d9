@@ -135,8 +135,9 @@ SET last_id = greatest(
   EXCLUDED.last_id
 );
 
--- Registration throttle: only a salted IP hash is retained, and application code
--- deletes entries older than 24 hours.
+-- Sign-up network record: one salted IP hash per completed sign-up, read by no
+-- code. Application code deletes entries older than 24 hours: src/reg-log-retention.ts,
+-- a step of the five-minute maintenance cron (/api/internal/payment-recovery).
 CREATE TABLE IF NOT EXISTS reg_log (
   ip_hash       TEXT NOT NULL CHECK (char_length(ip_hash) BETWEEN 32 AND 128),
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()

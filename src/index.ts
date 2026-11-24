@@ -189,6 +189,7 @@ import {
 } from './mcp-call-log.ts'
 import { mountMcpCallLogRoutes } from './mcp-call-log-routes.ts'
 import { runEachRetention } from './log-retention.ts'
+import { reportRegLogRetentionFailure, runRegLogRetention } from './reg-log-retention.ts'
 import { reportEventsTotalsFailure, runEventsTotalsMaintenance } from './events-totals-maintenance.ts'
 import { loadEventsListCollection } from './events-totals-read.ts'
 import {
@@ -1047,11 +1048,13 @@ mountPaymentRecoveryRoutes(app, {
   recheck: paymentRecoveryRuntime.recheck,
   runBatch: paymentRecoveryRuntime.runBatch,
   // Decision #141 adds the call log purge beside the runtime log purge; decision #196
-  // adds the kept events tally's fold and checks, which no read uses yet.
+  // adds the kept events tally's fold and checks, which no read uses yet. The last step
+  // deletes sign-up network records older than 24 hours, as db/schema.sql says.
   runMaintenance: async () => await runEachRetention([
     { run: () => runRuntimeLogRetention(runtimeDatabase), report: reportRuntimeLogRetentionFailure },
     { run: () => runMcpCallLogRetention(runtimeDatabase), report: reportMcpCallLogRetentionFailure },
     { run: () => runEventsTotalsMaintenance(runtimeDatabase, process.env), report: reportEventsTotalsFailure },
+    { run: () => runRegLogRetention(runtimeDatabase), report: reportRegLogRetentionFailure },
   ]),
   reportMaintenanceFailure: reportRuntimeLogRetentionFailure,
   reportFailure: reportPaymentRecoveryRecheckFailure,

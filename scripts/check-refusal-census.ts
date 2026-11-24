@@ -111,6 +111,8 @@ const INTERNAL_ERROR_MESSAGE_ADAPTERS = new Set([
   'src/public-snapshot-format.ts:Error',
   'src/public-snapshot-format.ts:TypeError',
   'src/reading-cost.ts:Error',
+  'src/reg-log-retention.ts:Error',
+  'src/reg-log-retention.ts:TypeError',
   'src/refusal-text.ts:Error',
   'src/resident-refusal.ts:Error',
   'src/resident-retirement.ts:Error',
