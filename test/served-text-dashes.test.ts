@@ -7,8 +7,10 @@ import ts from 'typescript'
 import { PUBLIC_EXACT_READ_BUSY_MESSAGE } from '../src/public-exact-query.ts'
 
 // The house rule: no em dash or en dash in anything served to residents or humans.
-// Served text lives in string and template literals under src/ and in the .txt sources
-// the front door is built from. Comments are not served text and are not checked here.
+// This checks served text kept in string and template literals under src/ and in the .txt
+// sources the front door is built from. Comments are not served text and are not checked here.
+// It does not cover text kept in the database, such as place descriptions seeded by
+// migrations (the world's arrival description still has one long dash; see PR #525).
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const SOURCE = join(ROOT, 'src')
 const DASH = /[–—]|&(?:mdash|ndash|#821[12]|#x201[34]);/iu
