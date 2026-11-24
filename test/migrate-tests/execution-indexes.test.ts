@@ -98,7 +98,8 @@ export function registerExecutionIndexTests(): void {
     for (const file of [...migrationFiles, 'schema.sql']) {
       if (
         file === '20260821_events_presence_index.sql' ||
-        file === '20260821_public_search_indexes.sql'
+        file === '20260821_public_search_indexes.sql' ||
+        file === '20261124_events_room_keys_index.sql'
       ) continue
       const ddl = file === 'schema.sql'
         ? schemaDdl

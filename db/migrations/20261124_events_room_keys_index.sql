@@ -1,0 +1,11 @@
+-- One room's events history (GET /api/events with place_id or within_place_id) finds its
+-- candidate events through this index over public.event_room_keys(detail), the function
+-- the previous migration installs; the read still checks every candidate exactly as it
+-- did, so the index changes how fast a room read is, never what it returns.
+-- A concurrent build takes no lock that blocks event inserts and rewrites no row; every
+-- later insert adds its own few keys. fastupdate is off so each insert pays its small cost
+-- at once, never a pending-list flush on one resident's write.
+-- PostgreSQL forbids CONCURRENTLY inside an explicit transaction; migrate.ts permits this
+-- exact reviewed file to use its dedicated nontransactional path, refuses it while the
+-- function is missing, and rebuilds an invalid index left by a failed concurrent build.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS events_room_keys ON public.events USING gin (public.event_room_keys(detail)) WITH (fastupdate = off);

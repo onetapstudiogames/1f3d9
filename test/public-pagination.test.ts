@@ -27,8 +27,10 @@ test('inside-place event history includes the selected place and its descendants
   assert.match(statement, /child\.parent_id = selected\.id/i)
   assert.match(statement, /thing\.place_id IN \(SELECT id FROM selected_places\)/i)
   assert.match(statement, /note\.place_id IN \(SELECT id FROM selected_places\)/i)
-  assert.match(statement, /JOIN public_change_log change ON change\.event_id = event\.id/iu)
-  assert.match(statement, /change\.change_id::text AS change_id/iu)
+  // A one-room read keeps each event's change id beside it and pages only events that have one.
+  assert.match(statement, /LEFT JOIN public_change_log change ON change\.event_id = event\.id/iu)
+  assert.match(statement, /room_event\.change_id IS NOT NULL/iu)
+  assert.match(statement, /room_event\.change_id::text AS change_id/iu)
   assert.match(statement, /event\.at\s*>=\s*transaction_timestamp\(\)[\s\S]*interval '1 second'/iu)
   assert.deepEqual(values, [null, null, 7, null, 11, 1_800, null])
 })

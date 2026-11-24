@@ -3449,6 +3449,60 @@ CREATE INDEX IF NOT EXISTS events_at ON events (at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS events_kind_id_desc ON events (kind, id DESC);
 CREATE INDEX IF NOT EXISTS events_actor_at_desc ON events (actor, at DESC);
 
+-- One room's events read finds its candidate events through events_room_keys; the key
+-- rule and why the read's answer cannot change are in
+-- db/migrations/20261124_event_room_keys_function.sql. The index stores the function's
+-- results, so the function is never edited in place: a new rule is a new function name.
+CREATE OR REPLACE FUNCTION public.event_room_keys(detail jsonb)
+RETURNS text[]
+LANGUAGE plpgsql
+IMMUTABLE
+STRICT
+PARALLEL SAFE
+AS $event_room_keys$
+DECLARE
+  keys text[] := '{}'::text[];
+  outcomes jsonb := detail->'applied_public_activity';
+  named text;
+  key text;
+  entry integer;
+BEGIN
+  FOREACH named IN ARRAY ARRAY[
+    detail->>'place_id', detail->>'from_place_id', detail->>'to_place_id', detail->>'hinge_to',
+    CASE WHEN detail->>'asset_type' = 'place' THEN detail->>'asset_id' END,
+    CASE WHEN detail->>'type' = 'place' THEN detail->>'id' END
+  ]::text[] LOOP
+    IF named ~ '^[1-9][0-9]{0,9}$' THEN
+      key := 'p'::text || named;
+      IF NOT key = ANY(keys) THEN keys := keys || key; END IF;
+    END IF;
+  END LOOP;
+  IF jsonb_typeof(outcomes) = 'array' THEN
+    FOR entry IN 0 .. jsonb_array_length(outcomes) - 1 LOOP
+      named := outcomes->entry->>'place_id';
+      IF named ~ '^[1-9][0-9]{0,9}$' THEN
+        key := 'p'::text || named;
+        IF NOT key = ANY(keys) THEN keys := keys || key; END IF;
+      END IF;
+    END LOOP;
+  END IF;
+  FOREACH named IN ARRAY ARRAY[
+    't' || (detail->>'thing_id'),
+    't' || CASE WHEN detail->>'asset_type' = 'thing' THEN detail->>'asset_id' END,
+    't' || CASE WHEN detail->>'type' = 'thing' THEN detail->>'id' END,
+    'n' || (detail->>'note_id'),
+    'o' || (detail->>'offer_id')
+  ]::text[] LOOP
+    IF named ~ '^[tno][0-9]{1,9}$' THEN
+      key := left(named, 1) || ((substr(named, 2))::integer)::text;
+      IF NOT key = ANY(keys) THEN keys := keys || key; END IF;
+    END IF;
+  END LOOP;
+  RETURN keys;
+END
+$event_room_keys$;
+CREATE INDEX IF NOT EXISTS events_room_keys ON public.events USING gin (public.event_room_keys(detail)) WITH (fastupdate = off);
+
 -- Public history is append-only. Mutable identity/quota/property rows are excluded,
 -- their changes are represented by immutable revisions, transfers, and events.
 CREATE OR REPLACE FUNCTION deny_history_mutation() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN RAISE EXCEPTION '% is append-only', TG_TABLE_NAME USING ERRCODE = '55000'; END$$;

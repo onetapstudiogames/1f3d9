@@ -2528,6 +2528,36 @@ from the feed rule's own pieces in `src/feed-rooms.ts`, and a change to either n
 step and the reads' use of it at once; `EVENTS_TOTALS_TALLY=off` stops both at the next
 deploy, and reads count the whole list again.
 
+One room's history (`GET /api/events` with `place_id`, or `within_place_id` with every
+room below it) finds its events through the GIN index `events_room_keys` instead of
+checking every event in the city. The index holds the keys each event's own stored detail
+names, `public.event_room_keys(detail)`: `p` and a room id for `place_id`,
+`from_place_id`, `to_place_id`, `hinge_to`, a place `asset_id` or `id`, and the `place_id`
+of every applied outcome, kept as the stored text and only when it reads as a positive
+room number; `t`, `n` and `o` and an id for the `thing_id`, `note_id`, `offer_id`, thing
+`asset_id` or `id` it names, cast as the place filter casts them. Events never change, so
+these keys never go stale. A room read lists the room's keys at that moment (the rooms,
+the things there now and not withdrawn, the notes there now, and the offers on those rooms
+and things), looks each key up on its own, and runs the same place filter as before, once,
+on those candidates only; its totals count them and its page takes the newest. A read with
+a kind, an actor or `within_seconds` on a room that holds much of the city (a continent,
+the world), or with a rare kind, a quiet resident or a short window, instead runs that
+filter over the events its kind, actor and window allow, as before the index: the
+statement counts those events up to 32 times the room's keys and looks up each key only
+when there are at least that many. A read with none of the three always looks up each
+key. Either way the filter decides what is kept. Everything
+that can change (where things and notes are, withdrawals, offers, the room tree, feed
+rooms, moderation) is still read when the read runs, so the answer is exactly what
+checking every event gives (`test/integration/room-events-keys-postgres.test.ts` compares
+it with the statement main sent before, frozen in `test/helpers/room-events-oracle`). The
+cost now grows with the room's own history, not the city's; a room with hundreds of
+thousands of its own events would be slow again. The function is never edited in place,
+because the index stores its results: a different key rule ships as a new function name
+with a new index. Its migrations, `event-room-keys-function` and then the concurrent
+`events-room-keys-index`, run before the code that reads them; without the function a
+room read is refused, and without a valid index it is only slower. Every other events read
+sends exactly the statement it sent before.
+
 Successful note creation, thing creation, and thing editing return a neutral
 `reading_cost` meter. `new_item_text_bytes` measures the new body;
 `room_stored_text_bytes` adds the room description, room purpose, and all counted room text; and

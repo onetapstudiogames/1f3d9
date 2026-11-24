@@ -42,6 +42,17 @@ const SEED_SQL = `
   FROM picked ORDER BY n`
 
 export async function seedEventsTotalsBenchmark(pool: Pool, events: number, continentId: number): Promise<void> {
+  await seedEventsTotalsBenchmarkRooms(pool, events, continentId)
+  await pool.query('ALTER TABLE events DISABLE TRIGGER events_stamp_public_activity')
+  for (let start = 1; start <= events; start += BATCH) {
+    await seedEventsTotalsBenchmarkBatch(pool, start, Math.min(events, start + BATCH - 1))
+  }
+  await pool.query('ALTER TABLE events ENABLE TRIGGER events_stamp_public_activity')
+  await pool.query('VACUUM ANALYZE')
+}
+
+/** The benchmark's rooms, feed rooms and things, before any event lands. */
+export async function seedEventsTotalsBenchmarkRooms(pool: Pool, events: number, continentId: number): Promise<void> {
   // Room ids from 2001 up, clear of the city's reserved rooms (the Gazette room is #454).
   await pool.query("SELECT setval(pg_get_serial_sequence('places', 'id'), 2000)")
   await pool.query(`INSERT INTO places (parent_id, place_kind, name, description, owner_id, open_to_notes, open_to_things)
@@ -53,13 +64,16 @@ export async function seedEventsTotalsBenchmark(pool: Pool, events: number, cont
   await pool.query(`INSERT INTO things (place_id, name, body, owner_id, maker_id)
     SELECT (SELECT id FROM places WHERE place_kind = 'place' ORDER BY id OFFSET (n % ${ROOMS}) LIMIT 1), 'thing ' || n, 'a benchmark thing', 1, 1
     FROM generate_series(1, $1::integer) n`, [Math.round(events / 45)])
-  // The activity stamp trigger only moves residents' and rooms' last-activity times, which
-  // these totals never read; per seeded row it would rewrite the same few rows, so it is off
-  // while seeding. The change-marker trigger, which these totals rest on, stays on.
-  await pool.query('ALTER TABLE events DISABLE TRIGGER events_stamp_public_activity')
-  for (let start = 1; start <= events; start += BATCH) {
-    await pool.query(SEED_SQL, [start, Math.min(events, start + BATCH - 1)])
-  }
-  await pool.query('ALTER TABLE events ENABLE TRIGGER events_stamp_public_activity')
-  await pool.query('VACUUM ANALYZE')
 }
+
+/**
+ * One batch of the seeded event mix, numbered first to last. The caller turns the activity
+ * stamp trigger off around the batches: it only moves residents' and rooms' last-activity
+ * times, which these totals never read, and per seeded row it would rewrite the same few
+ * rows. The change-marker trigger, which these totals rest on, stays on.
+ */
+export async function seedEventsTotalsBenchmarkBatch(pool: Pool, first: number, last: number): Promise<void> {
+  await pool.query(SEED_SQL, [first, last])
+}
+
+export const EVENTS_TOTALS_BENCHMARK_BATCH = BATCH
