@@ -132,6 +132,18 @@ test('the public format docs list one artifact for every exported class', async 
   assert.deepEqual(documentedFiles, [...exportedFiles, 'manifest.json'].sort())
 })
 
+test('every class in the not public and not exported doc tables is a registry class with that disposition', async () => {
+  const docs = await readFile(new URL('../docs/PUBLIC_SNAPSHOTS.md', import.meta.url), 'utf8')
+  const dispositions = new Map(PUBLIC_SNAPSHOT_CLASS_REGISTRY.map(entry => [entry.class_name, entry.disposition]))
+  for (const [heading, disposition] of [['Not public', 'not_public'], ['Not exported', 'not_exported']] as const) {
+    const table = docs.match(new RegExp(`### ${heading}\\r?\\n([\\s\\S]*?)(?:\\r?\\n#|$)`, 'u'))?.[1]
+    assert.ok(table, heading)
+    const documented = [...table.matchAll(/^\| `([a-z_]+)` \|/gmu)].map(match => match[1]!)
+    assert.ok(documented.length > 0, heading)
+    for (const name of documented) assert.equal(dispositions.get(name), disposition, `${heading}: ${name}`)
+  }
+})
+
 test('snapshot bundles are deterministic, split by class, and verify offline', async () => {
   const root = await mkdtemp(join(tmpdir(), '1f3d9-snapshot-format-'))
   try {
