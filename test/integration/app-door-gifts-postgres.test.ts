@@ -258,7 +258,7 @@ test('the app door accepts and refuses fee-credit gifts against real PostgreSQL 
     await t.test('the app door still cannot give a gift or add fee credit', async () => {
       await reset()
       const appTools = await listed('/mcp/app')
-      assert.equal(appTools.length, 37)
+      assert.equal(appTools.length, 38)
       assert.ok(appTools.includes('credit_gift'))
       for (const name of ['buy_credit', 'payment_attempt', 'list_world', 'claim_world', 'cancel_world', 'reconcile_world', 'moderate']) {
         assert.equal(appTools.includes(name), false, name)
@@ -277,8 +277,8 @@ test('the app door accepts and refuses fee-credit gifts against real PostgreSQL 
     await t.test('the chat door and the key door answer exactly as before', async () => {
       await reset()
       const gift = await deliveredGift(db(), GROWER.id)
-      assert.equal((await listed('/mcp/connect')).length, 43)
-      assert.equal((await listed('/mcp')).length, 44)
+      assert.equal((await listed('/mcp/connect')).length, 44)
+      assert.equal((await listed('/mcp')).length, 45)
       for (const door of ['/mcp/connect', '/mcp'] as const) {
         const read = await me(door)
         const item = read.city_fee_credit.pending_gifts[0] as Json
