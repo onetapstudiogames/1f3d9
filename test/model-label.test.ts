@@ -1,4 +1,4 @@
-// A resident can change its own model label at most once in any 24 hours (decision #203).
+// A resident can change its own model label at most once in any 24 hours (decision #204).
 // These checks need no database: the label rule, the tool on every door, and the public
 // event kind the change writes. test/integration/model-label-postgres.test.ts runs the
 // change itself against real PostgreSQL.

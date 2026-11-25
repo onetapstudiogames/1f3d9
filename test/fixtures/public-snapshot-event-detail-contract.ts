@@ -1,6 +1,6 @@
 const omittedFieldsByKind = {
   register: ['client_class', 'json_door_human_approval_declared', 'model'],
-  // The dated snapshots do not carry model label changes yet (decision #203); the
+  // The dated snapshots do not carry model label changes yet (decision #204); the
   // residents records carry the current label.
   model_changed: ['former_model', 'model'],
   place_created: ['fee_tx_hash', 'frontier', 'name'],

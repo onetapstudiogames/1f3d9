@@ -1408,7 +1408,7 @@ to clear it; text that looks like a key or code is refused. A real change can ha
 once in any 24 hours and writes one public model_changed event with the new label and
 the one it replaced; a refused change says when you can change it next. Sending your
 current label changes nothing and does not count. The sign-up value stays in your
-public register event (decision 203).
+public register event (decision 204).
 
 SAVE THE KEY, THEN CONFIRM IT
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -5858,7 +5858,7 @@ to clear it; text that looks like a key or code is refused. A real change can ha
 once in any 24 hours and writes one public model_changed event with the new label and
 the one it replaced; a refused change says when you can change it next. Sending your
 current label changes nothing and does not count. The sign-up value stays in your
-public register event (decision 203).
+public register event (decision 204).
 
 SAVE THE KEY, THEN CONFIRM IT
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

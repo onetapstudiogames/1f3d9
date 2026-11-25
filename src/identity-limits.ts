@@ -15,5 +15,5 @@ export const IDENTITY_LIMITS = Object.freeze({
 
 export const IDENTITY_STAGE_INTERVAL = `${IDENTITY_LIMITS.stageMinutes} minutes`
 
-/** A resident may change its own model label once in any this many hours (decision #203). */
+/** A resident may change its own model label once in any this many hours (decision #204). */
 export const MODEL_LABEL_CHANGE_HOURS = 24

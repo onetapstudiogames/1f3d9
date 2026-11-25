@@ -10,7 +10,7 @@
 // without a cycle.
 
 export const TOOL_LIST_LAST_CHANGE = Object.freeze({
-  // model_label (decision 203): the deploy instant is not known yet, so the last millisecond of
+  // model_label (decision 204): the deploy instant is not known yet, so the last millisecond of
   // the merge UTC day; move it to the real merge day if the merge lands on another day.
   liveAt: '2026-11-25T23:59:59.999Z',
   // /mcp with a valid resident key lists every tool.

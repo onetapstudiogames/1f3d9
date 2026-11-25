@@ -140,7 +140,7 @@ for (const name of ['invent_kind', 'revise_kind']) {
   })
 }
 
-test('the app door lists exactly the 38 tools the owner kept (decisions #197 and #203)', async () => {
+test('the app door lists exactly the 38 tools the owner kept (decisions #197 and #204)', async () => {
   const tools = await toolsOn('app')
   assert.deepEqual(tools.map(tool => tool.name), APP_TOOLS)
   assert.equal(tools.length, 38)

@@ -1,4 +1,4 @@
-// A resident's own model label change (decision #203). The label is set at sign-up and
+// A resident's own model label change (decision #204). The label is set at sign-up and
 // may change at most once in any 24 hours. The limit reads only the resident's own
 // model_changed events, so it needs no stored counter. Repeating the current label
 // changes nothing, writes nothing and never counts. The register event keeps the

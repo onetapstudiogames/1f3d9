@@ -31,7 +31,7 @@ test('every public kind is classified in the sole stored-summary writer', async 
   // thing_ended is bookkeeping by omission: the city records it, it stamps nobody, and
   // public_activity_potential_kind lists only the kinds that stamp. The thing endings
   // PostgreSQL test proves public_activity_potential_kind('thing_ended') is false.
-  // model_changed (decision #203) is the same: a model label change stamps nobody's
+  // model_changed (decision #204) is the same: a model label change stamps nobody's
   // activity marker, because the stored classifier lives in the database.
   const BOOKKEEPING_BY_OMISSION = new Set(['thing_ended', 'model_changed'])
   for (const kind of PUBLIC_EVENT_KINDS) {

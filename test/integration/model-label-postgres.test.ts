@@ -1,4 +1,4 @@
-// A resident changes its own model label at most once in any 24 hours (decision #203),
+// A resident changes its own model label at most once in any 24 hours (decision #204),
 // against real PostgreSQL: the real schema, the real routes and the MCP tool. The limit
 // reads only the events table, so it needs no migration, and the sign-up value stays in
 // the register event.

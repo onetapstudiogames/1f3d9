@@ -31,7 +31,7 @@ export function publicLabel(value: unknown, maximum = PUBLIC_LABEL_MAX_CHARACTER
 }
 
 /**
- * A resident's model label as a change sets it (decision #203): trimmed like the /join
+ * A resident's model label as a change sets it (decision #204): trimmed like the /join
  * field, one line of at most 120 characters (the residents.model limit), empty to clear,
  * and refused by the same public-text check sign-up uses, credential shapes included.
  */

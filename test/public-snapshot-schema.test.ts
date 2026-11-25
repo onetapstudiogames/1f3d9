@@ -49,7 +49,7 @@ const V3_TALK_BRANCH_EVENT_KINDS = new Set(Object.keys(TALK_EVENT_TARGETS))
 // Like the talk kinds, thing_ended is in dated snapshots only through its own format-v4
 // branch (decision #180), never the v1 or v2 VALUES allowlists or the v3 talk branch.
 const V4_ENDING_BRANCH_EVENT_KINDS = new Set(['thing_ended'])
-// The dated snapshots do not carry model label changes yet (decision #203); each resident
+// The dated snapshots do not carry model label changes yet (decision #204); each resident
 // record carries its current label, and the register event its sign-up label.
 const SNAPSHOT_ABSENT_MODEL_LABEL_EVENT_KINDS = new Set(['model_changed'])
 const currentPublicEventKinds = (PUBLIC_EVENT_KINDS.includes('resident_edited')

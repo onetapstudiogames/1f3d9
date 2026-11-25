@@ -139,7 +139,7 @@ export const PUBLIC_EVENT_KIND_DETAIL_FIELDS: Readonly<Record<string, readonly s
   // thing_id and place_id are shared fields; the owner is the owner as of the end.
   thing_ended: Object.freeze(['cause', 'ended_at', 'owner_id', 'owner', 'program_state']),
   line_said: Object.freeze(['line_id']),
-  // decision #203: the new label and the one it replaced, both already public.
+  // decision #204: the new label and the one it replaced, both already public.
   model_changed: Object.freeze(['model', 'former_model']),
   ping_sent: Object.freeze(['ping_id']),
   ping_answered: Object.freeze(['ping_id', 'answer']),
