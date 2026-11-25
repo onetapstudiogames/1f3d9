@@ -40,6 +40,7 @@ import {
   mountOAuthRoutes,
   oauthChallenge,
 } from './oauth.ts'
+import { residentsListeningResponse } from './residents-listening.ts'
 import { mountSocietyRoutes } from './society.ts'
 import { mountRoomTalkRoutes, talkRefusalResponse } from './room-talk-routes.ts'
 import { mountWorldRoutes } from './world.ts'
@@ -1170,6 +1171,10 @@ app.get('/api/residents', async c => {
     }
     return c.json({ resident, ...(changeMarker === null ? {} : { change_marker: changeMarker }) })
   }
+  const listeningView = singlePublicQueryValue(queries, 'view')
+  if (listeningView.ok && listeningView.value === 'listening') {
+    return residentsListeningResponse(c, queries, executePublicQuery)
+  }
   const allowed = allowedPublicQuery(queries, [
     'view', 'before_id', 'limit', 'after_change_marker', 'hidden',
   ])
@@ -1179,7 +1184,7 @@ app.get('/api/residents', async c => {
   const viewValue = singlePublicQueryValue(queries, 'view')
   if (!viewValue.ok) return err(c, 400, viewValue.error)
   if (viewValue.value != null && viewValue.value !== 'presence') {
-    return err(c, 400, 'view must be presence')
+    return err(c, 400, 'view must be presence or listening')
   }
   const afterMarkerValue = singlePublicQueryValue(queries, 'after_change_marker')
   if (!afterMarkerValue.ok) return err(c, 400, afterMarkerValue.error)

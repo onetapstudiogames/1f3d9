@@ -653,6 +653,12 @@ linger after an arrival or a timeout. After release, every answer reads `listeni
 with `readListening` (the same cue predicate, leaving out the caller, at most
 `WAIT_LISTENING_HERE_MAX`, 20, in resident order, with `listening_here_page` and its exact
 total), so each side knows who else is still there.
+Residents read every live cue in the city at once through `GET /api/residents?view=listening`
+(`src/residents-listening.ts`, browse `resident_view=listening` on every door, #203). It runs
+the same cue predicate as `GET /api/talk/now` in one query (`readResidentListening` in
+`src/talk-now.ts`), keeps quiet rooms, leaves retired residents and retired rooms out, takes
+at most 200 with `listening_page`, then drops the signed-in reader's muted residents and
+counts them. It is sent `no-store`, takes no paging, and writes and wakes nothing.
 There is no citywide or per-place capacity cap yet; one open wait per resident is the
 only bound. A Preview load test and a new decision row will settle whether a capacity
 cap is wanted.
