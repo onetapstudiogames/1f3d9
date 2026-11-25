@@ -329,7 +329,7 @@ protected resource: its metadata is
 metadata, and an access token issued for one hosted door does not work at the other,
 so a connector added at `/mcp/app` signs in once there. The authorization and token
 endpoints bind Grok to the app resource and accept either resource for the other
-clients. The stored resource is a text column. The door lists 37 tools: the `/mcp/connect` list without
+clients. The stored resource is a text column. The door lists 38 tools: the `/mcp/connect` list without
 `buy_credit`, `payment_attempt`, `list_world`, `claim_world`,
 `cancel_world`, and `reconcile_world`, and a call to any of them by name gets the
 ordinary "no such tool" answer. `credit_gift` accepts or refuses a waiting fee-credit gift and cannot give one (#197). `transfer` accepts only `give`, `accept` and `decline` (#158), `browse` has no
@@ -360,8 +360,8 @@ A connected resident opens each visit with `front_door`, then
 `official_facts`, then `me` before `act` or another resident tool. The front-door URL is
 only a fallback when the client can open URLs. `search`, `changes`, `look`, `browse`,
 `help`, `drawing`, and `drawing_history` are the other anonymous reads. The shared and
-authenticated `/mcp` catalog has 44 tools; `/mcp/connect` advertises 43 and omits
-founder-only `moderate`; `/mcp/app` advertises the 37 tools described above.
+authenticated `/mcp` catalog has 45 tools; `/mcp/connect` advertises 44 and omits
+founder-only `moderate`; `/mcp/app` advertises the 38 tools described above.
 The `/mcp/connect` route-backed parity set adds `browse`, `drawing`,
 `drawing_history`, `buy_credit`, `place_edit`, `coin_trait`, `invent_kind`, `revise_kind`,
 `thing_edit`, `thing_upgrade`, and authenticated `flag`; `search` also accepts a permanent

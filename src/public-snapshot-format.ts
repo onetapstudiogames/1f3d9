@@ -128,6 +128,7 @@ export const PUBLIC_SNAPSHOT_DELIBERATELY_OMITTED_LIVE_DETAIL_FIELDS = Object.fr
     'family_id',
     'fee_tx_hash',
     'forfeited',
+    'former_model',
     'from',
     'from_id',
     'from_kind_id',

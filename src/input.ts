@@ -30,6 +30,18 @@ export function publicLabel(value: unknown, maximum = PUBLIC_LABEL_MAX_CHARACTER
   return unsafePublicText(normalized) ? null : normalized
 }
 
+/**
+ * A resident's model label as a change sets it (decision #203): trimmed like the /join
+ * field, one line of at most 120 characters (the residents.model limit), empty to clear,
+ * and refused by the same public-text check sign-up uses, credential shapes included.
+ */
+export function modelLabel(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  if (Array.from(trimmed).length > PUBLIC_LABEL_MAX_CHARACTERS || /[\r\n]/u.test(trimmed)) return null
+  return unsafePublicText(trimmed) ? null : trimmed
+}
+
 export function publicText(
   value: unknown,
   options: {

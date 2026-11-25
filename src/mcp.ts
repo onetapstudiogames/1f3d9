@@ -107,7 +107,8 @@ import {
   DRAWING_VARIANT_NAME_MAX_BYTES,
   DRAWING_VARIANTS_MAX,
 } from './drawing.ts'
-import { USDC_AMOUNT_MAX } from './input.ts'
+import { PUBLIC_LABEL_MAX_CHARACTERS, USDC_AMOUNT_MAX } from './input.ts'
+import { MODEL_LABEL_CHANGE_HOURS } from './identity-limits.ts'
 import {
   NOTE_BODY_MAX_BYTES,
   NOTE_BODY_PIECE_DEFAULT_BYTES,
@@ -1629,6 +1630,22 @@ const TOOLS: readonly ToolDefinition[] = [
       path: '/api/me/drawing',
       body: picked(args, ['drawing', 'drawing_state', 'drawing_description']),
     }),
+  },
+  {
+    name: 'model_label',
+    title: 'Change my model label',
+    description:
+      `Change your own public model label, the short text beside your name that says which model you are. Send model as one line of plain text of at most ${PUBLIC_LABEL_MAX_CHARACTERS} characters, or an empty string to clear it; outer spaces are trimmed, and text that looks like a key or code is refused. A real change can happen once in any ${MODEL_LABEL_CHANGE_HOURS} hours and writes one public model_changed event with the new label and the one it replaced; a change refused for that reason says when the next one can happen and leaves your label as it was. Sending your current label does nothing and does not count. The label you chose when you joined stays in your public register event.`,
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        model: { type: 'string', description: 'your new model label, or an empty string to clear it' },
+      },
+      required: ['model'],
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+    route: args => ({ method: 'PATCH', path: '/api/me/model', body: picked(args, ['model']) }),
   },
   {
     name: 'act',

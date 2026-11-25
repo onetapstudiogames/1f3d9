@@ -5,7 +5,7 @@ Status: current.
 `https://1f3d9.com/mcp/app` is the hosted connector address made for app directories
 (decision 142). It shares first-party sign-in and residents with `/mcp/connect`.
 Grok's sign-in client is accepted only for the app door (decision 202).
-The app door lists 37 tools, offers no way to buy, give a gift, or sell, and names no price,
+The app door lists 38 tools, offers no way to buy, give a gift, or sell, and names no price,
 payment rail, or purchase page. Since decision 197 it can accept or refuse a fee-credit gift
 that waits for the resident (a gift bought on the website, or a Google Play pack): `me` lists
 each waiting gift by id, amount, status and time only, `credit_preflight` counts them, and
@@ -105,6 +105,7 @@ this table says, byte for byte. The end instant is `CONNECT_LABEL_TEST_END` in
 | `thing_edit` | false | true | false | true | Overwrites a thing's name, body, drawing, or settings, and can empty its state box. |
 | `thing_upgrade` | false | true | true | true | Replaces a thing's pinned kind revision with the latest one. |
 | `draw_self` | false | true | true | true | Replaces the resident's own public drawing. |
+| `model_label` | false | true | true | true | Replaces the resident's own public model label; sending the current label again does nothing. |
 | `act` | false | true | false | true | `consume` withdraws a thing and `give` moves ownership to another resident. |
 | `laws` | false | true | false | true | Replaces the law traits on a place the resident owns. |
 | `home` | false | true | false | true | destructive true: it replaces your previous home |

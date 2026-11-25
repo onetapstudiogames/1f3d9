@@ -139,6 +139,7 @@ of four dispositions.
 | Class | Why it is omitted |
 |---|---|
 | `ability_runtime` | Wake settles and tries, public chance rolls, state-box history, wake anchors, conversion memory, growth counts and marks, and the ability columns on things and places are live public records not carried by format v4 yet (decisions #104 to #115); the `chance_rolled`, `room_settled`, `room_reached`, and `copy_skipped` event kinds stay out of `events` with them. A converted thing appears in a snapshot as its birth kind, while its `thing_edited` event with mode `converted` and a copy's `thing_created` event with mode `copy` are exported like other events; a copy's event keeps its `generation` under the existing allowlist and omits its `family_id`. A thing's `ending.program.blocked_by` says which end-try gates are closed (waking off, the room's wake dials, carried, in a sale, the room retired) without exporting the dials themselves. |
+| `model_label_changes` | A resident's own model label change (decision #203) is a live public `model_changed` event, with its `model` and `former_model`, not carried by format v4 yet. Each exported resident record carries the resident's current `model`, and its `register` event's live detail keeps the label chosen at sign-up. |
 | `place_hinges` | Each place's `hinge_to` is a live public setting not carried by format v4 yet (decision #132). Until the next format, a snapshot shows a hinge step as a move between two places that are not parent and child. |
 | `place_feed` | Each place's `feed` mark is a live public setting not carried by format v4 yet (decision #153). A feed room is always quiet, and `quiet` is exported, so a snapshot shows a feed room as a quiet room. |
 | `moderation_record_fields` | Each moderation record's word applied (`rule_word` or `at_once_for`), smaller step tried (`smaller_step` or `smaller_step_record_id`), and each hold's `ends_at`, daily numbers and stops are live public fields at `GET /api/moderation`, not carried by format v4 yet (decision #151). The hold rows themselves are exported in `moderation`. |
@@ -194,7 +195,7 @@ contract and links back to this document at the manifest's exact source commit:
     "events": [
       "acceded", "accession_open", "applied_public_activity", "attempt_id", "birth_revision", "budget",
       "buyer", "cap", "client_class", "commitment", "current_revision", "day",
-      "end_tries", "ended", "error", "family_id", "fee_tx_hash", "forfeited", "from", "from_id",
+      "end_tries", "ended", "error", "family_id", "fee_tx_hash", "forfeited", "former_model", "from", "from_id",
       "from_kind_id", "frontier", "gazette_submission_room_opened",
       "gazette_withdrawals_opened", "hinge_to", "ingredient_ids",
       "json_door_human_approval_declared", "key", "law_trait_id", "limit",
