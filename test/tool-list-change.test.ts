@@ -4,10 +4,10 @@ import { CITY_TOOL_CATALOG, CITY_TOOL_DOOR_COUNTS } from '../src/city-facts.ts'
 import { STALE_TOOLS_FIX, TOOL_LIST_LAST_CHANGE, toolsChangedLine } from '../src/tool-list-change.ts'
 
 const FIX = 'In ChatGPT, press Refresh tools on the plugin page, and if the list is still old, remove the plugin and add it again; in claude.ai, remove the connector and add it again. In a coding client such as Claude Code or Codex, start a new session so it loads the list again.'
-const KEY_DOOR_LINE = `The city tool list last changed on 2026-09-25, and /mcp with a valid current key should now list ${CITY_TOOL_DOOR_COUNTS['/mcp'].authenticated} tools; if yours shows a different number, it is out of date. Ask your human to load the list again. ${FIX}`
-const HOSTED_DOOR_LINE = `The city tool list last changed on 2026-09-25, and /mcp/connect should now list ${CITY_TOOL_DOOR_COUNTS['/mcp/connect'].count} tools; if yours shows a different number, it is out of date. Ask your human to load the list again. ${FIX}`
-const LIVE_AT = '2026-09-25T09:31:06.000Z'
-const NOW = new Date('2026-09-27T12:00:00.000Z')
+const KEY_DOOR_LINE = `The city tool list last changed on 2026-11-25, and /mcp with a valid current key should now list ${CITY_TOOL_DOOR_COUNTS['/mcp'].authenticated} tools; if yours shows a different number, it is out of date. Ask your human to load the list again. ${FIX}`
+const HOSTED_DOOR_LINE = `The city tool list last changed on 2026-11-25, and /mcp/connect should now list ${CITY_TOOL_DOOR_COUNTS['/mcp/connect'].count} tools; if yours shows a different number, it is out of date. Ask your human to load the list again. ${FIX}`
+const LIVE_AT = '2026-11-25T23:59:59.999Z'
+const NOW = new Date('2026-11-27T12:00:00.000Z')
 const RECORD_MESSAGE = 'The tool count changed. Set TOOL_LIST_LAST_CHANGE in src/tool-list-change.ts to the new counts and the instant the change goes live (the last millisecond of the merge UTC day when the deploy instant is not known), so me tells residents to reload their tool list.'
 
 test('the recorded tool list change matches the catalogue on both doors', () => {
@@ -35,19 +35,19 @@ test('a first visit gets no tools_changed line', () => {
 })
 
 test('a visit before the change went live gets the line with the caller door count', () => {
-  assert.equal(toolsChangedLine('2026-09-24T08:00:00.000Z', 'coding', NOW), KEY_DOOR_LINE)
-  assert.equal(toolsChangedLine('2026-09-24T08:00:00.000Z', 'hosted_chat', NOW), HOSTED_DOOR_LINE)
+  assert.equal(toolsChangedLine('2026-11-24T08:00:00.000Z', 'coding', NOW), KEY_DOOR_LINE)
+  assert.equal(toolsChangedLine('2026-11-24T08:00:00.000Z', 'hosted_chat', NOW), HOSTED_DOOR_LINE)
 })
 
-test('the line follows the exact instant the change went live, so a later visit that day is not told again', () => {
-  assert.equal(toolsChangedLine('2026-09-25T09:31:05.999Z', 'coding', NOW), KEY_DOOR_LINE)
+test('the line follows the exact instant the change went live, so a later visit is not told again', () => {
+  assert.equal(toolsChangedLine('2026-11-25T23:59:59.998Z', 'coding', NOW), KEY_DOOR_LINE)
   assert.equal(toolsChangedLine(LIVE_AT, 'coding', NOW), null)
-  assert.equal(toolsChangedLine('2026-09-25T20:00:00.000Z', 'coding', NOW), null)
+  assert.equal(toolsChangedLine('2026-11-26T08:00:00.000Z', 'coding', NOW), null)
 })
 
 test('a change that is not live yet stays quiet', () => {
-  assert.equal(toolsChangedLine('2026-09-20T00:00:00.000Z', 'coding', new Date('2026-09-25T09:31:05.999Z')), null)
-  assert.equal(toolsChangedLine('2026-09-20T00:00:00.000Z', 'coding', new Date(LIVE_AT)), KEY_DOOR_LINE)
+  assert.equal(toolsChangedLine('2026-11-20T00:00:00.000Z', 'coding', new Date('2026-11-25T23:59:59.998Z')), null)
+  assert.equal(toolsChangedLine('2026-11-20T00:00:00.000Z', 'coding', new Date(LIVE_AT)), KEY_DOOR_LINE)
 })
 
 test('an unreadable previous visit stays quiet', () => {

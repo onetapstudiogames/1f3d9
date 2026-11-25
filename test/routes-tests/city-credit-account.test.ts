@@ -3,11 +3,16 @@ import { getRoutesTestContext } from '../helpers/routes-fixtures/context.ts'
 import { parseCityCreditRequestId } from '../../src/city-credit.ts'
 import { connectorWordingHits } from '../helpers/connector-wording.ts'
 import { CITY_TOOL_DOOR_COUNTS } from '../../src/city-facts.ts'
+import { TOOL_LIST_LAST_CHANGE } from '../../src/tool-list-change.ts'
 
 const STALE_FIX = 'In ChatGPT, press Refresh tools on the plugin page, and if the list is still old, remove the plugin and add it again; in claude.ai, remove the connector and add it again. In a coding client such as Claude Code or Codex, start a new session so it loads the list again.'
-const KEY_DOOR_LINE = `The city tool list last changed on 2026-09-25, and /mcp with a valid current key should now list ${CITY_TOOL_DOOR_COUNTS['/mcp'].authenticated} tools; if yours shows a different number, it is out of date. Ask your human to load the list again. ${STALE_FIX}`
-const HOSTED_DOOR_LINE = `The city tool list last changed on 2026-09-25, and /mcp/connect should now list ${CITY_TOOL_DOOR_COUNTS['/mcp/connect'].count} tools; if yours shows a different number, it is out of date. Ask your human to load the list again. ${STALE_FIX}`
-const BEFORE_TOOL_CHANGE = '2026-09-25T09:31:05.999Z'
+const CHANGE_DAY = TOOL_LIST_LAST_CHANGE.liveAt.slice(0, 10)
+const KEY_DOOR_LINE = `The city tool list last changed on ${CHANGE_DAY}, and /mcp with a valid current key should now list ${CITY_TOOL_DOOR_COUNTS['/mcp'].authenticated} tools; if yours shows a different number, it is out of date. Ask your human to load the list again. ${STALE_FIX}`
+const HOSTED_DOOR_LINE = `The city tool list last changed on ${CHANGE_DAY}, and /mcp/connect should now list ${CITY_TOOL_DOOR_COUNTS['/mcp/connect'].count} tools; if yours shows a different number, it is out of date. Ask your human to load the list again. ${STALE_FIX}`
+const LIVE_AT_MS = Date.parse(TOOL_LIST_LAST_CHANGE.liveAt)
+const BEFORE_TOOL_CHANGE = new Date(LIVE_AT_MS - 1).toISOString()
+// The line shows only once the change is live, so these reads run on a clock two days after it.
+const AFTER_TOOL_CHANGE = LIVE_AT_MS + 2 * 86_400_000
 const ME_TOOL_CALL = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'me', arguments: {} } })
 
 async function meAnswerFromTool(response: Response): Promise<{ since_last_visit: Record<string, unknown> }> {
@@ -108,7 +113,8 @@ export function registerCityCreditAccountTests(): void {
     assert.equal(Object.hasOwn(body.since_last_visit, 'tools_changed'), false)
   })
 
-  test('/api/me tells a resident whose last visit came before the tool list changed, with the key door count', async () => {
+  test('/api/me tells a resident whose last visit came before the tool list changed, with the key door count', async t => {
+    t.mock.timers.enable({ apis: ['Date'], now: AFTER_TOOL_CHANGE })
     reset({ attentionLastVisitAt: BEFORE_TOOL_CHANGE })
     const response = await app.request('/api/me', { headers: authHeaders() })
     assert.equal(response.status, 200, await response.clone().text())
@@ -148,7 +154,8 @@ export function registerCityCreditAccountTests(): void {
     }
   })
 
-  test('me through the /mcp door names 44 tools, and the tool-call header cannot claim the hosted count', async () => {
+  test('me through the /mcp door names the key door tool count, and the tool-call header cannot claim the hosted count', async t => {
+    t.mock.timers.enable({ apis: ['Date'], now: AFTER_TOOL_CHANGE })
     reset({ attentionLastVisitAt: BEFORE_TOOL_CHANGE })
     const viaMcp = await meAnswerFromTool(await app.request('/mcp', {
       method: 'POST',
@@ -164,7 +171,8 @@ export function registerCityCreditAccountTests(): void {
     assert.equal(withHeaderBody.since_last_visit.tools_changed, KEY_DOOR_LINE)
   })
 
-  test('me through the hosted /mcp/connect door names 43 tools', async () => {
+  test('me through the hosted /mcp/connect door names the hosted door tool count', async t => {
+    t.mock.timers.enable({ apis: ['Date'], now: AFTER_TOOL_CHANGE })
     const previousHostedFlag = process.env.HOSTED_CHAT_SIGNIN_ENABLED
     process.env.HOSTED_CHAT_SIGNIN_ENABLED = 'true'
     try {
@@ -183,8 +191,13 @@ export function registerCityCreditAccountTests(): void {
     }
   })
 
-  test('/api/me stays quiet about the tool list when the last visit came after the change went live', async () => {
-    for (const lastVisitAt of ['2026-09-25T09:31:06.000Z', '2026-09-25T20:00:00.000Z', '2026-09-26T00:00:00.000Z']) {
+  test('/api/me stays quiet about the tool list when the last visit came after the change went live', async t => {
+    t.mock.timers.enable({ apis: ['Date'], now: AFTER_TOOL_CHANGE })
+    for (const lastVisitAt of [
+      TOOL_LIST_LAST_CHANGE.liveAt,
+      new Date(LIVE_AT_MS + 3_600_000).toISOString(),
+      new Date(LIVE_AT_MS + 86_400_000).toISOString(),
+    ]) {
       reset({ attentionLastVisitAt: lastVisitAt })
       const response = await app.request('/api/me', { headers: authHeaders() })
       assert.equal(response.status, 200, await response.clone().text())

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { safeguardToolResponse } from '../../src/mcp.ts'
 import { getRoutesTestContext } from '../helpers/routes-fixtures/context.ts'
+import { TOOL_LIST_LAST_CHANGE } from '../../src/tool-list-change.ts'
 
 const GAZETTE_WINDOW = Object.freeze({
   after_change_id: null,
@@ -132,7 +133,9 @@ export function registerGazetteDeliveryTests(): void {
     assert.match(body.gazette.summary, /Your first me after each Monday print lists up to 20 of its entries\./u)
   })
 
-  test('/api/me places gazette after since_last_visit without changing its keys', async () => {
+  test('/api/me places gazette after since_last_visit without changing its keys', async t => {
+    // tools_changed shows only once the recorded tool list change is live.
+    t.mock.timers.enable({ apis: ['Date'], now: Date.parse(TOOL_LIST_LAST_CHANGE.liveAt) + 2 * 86_400_000 })
     reset({
       attentionLastVisitAt: '2026-09-20T12:00:00.000Z',
       gazetteWindow: GAZETTE_WINDOW,

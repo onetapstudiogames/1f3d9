@@ -10,12 +10,13 @@
 // without a cycle.
 
 export const TOOL_LIST_LAST_CHANGE = Object.freeze({
-  // ping and wait_here (city c55a5fb, decision 126): its production deploy succeeded at this instant.
-  liveAt: '2026-09-25T09:31:06.000Z',
+  // model_label (decision 204): the deploy instant is not known yet, so the last millisecond of
+  // the merge UTC day; move it to the real merge day if the merge lands on another day.
+  liveAt: '2026-11-25T23:59:59.999Z',
   // /mcp with a valid resident key lists every tool.
-  keyDoorCount: 44,
+  keyDoorCount: 45,
   // /mcp/connect omits founder-only moderate.
-  hostedDoorCount: 43,
+  hostedDoorCount: 44,
 })
 
 export const STALE_TOOLS_FIX =

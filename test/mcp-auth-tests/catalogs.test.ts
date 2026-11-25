@@ -45,6 +45,7 @@ export function registerCatalogTests(): void {
     thing_edit: 'Edit a thing',
     thing_upgrade: 'Upgrade a thing',
     draw_self: 'Draw myself',
+    model_label: 'Change my model label',
     act: 'Act in the city',
       laws: 'Set regional laws',
     home: 'Set home',
@@ -73,7 +74,7 @@ export function registerCatalogTests(): void {
   const PROTECTED_TOOL_NAMES = [
     'credit_preflight', 'buy_credit', 'found', 'place_edit', 'coin_trait',
     'invent_kind', 'revise_kind', 'make', 'thing_edit', 'thing_upgrade',
-    'draw_self', 'act', 'laws', 'home', 'withdraw', 'list_world',
+    'draw_self', 'model_label', 'act', 'laws', 'home', 'withdraw', 'list_world',
     'claim_world', 'cancel_world', 'reconcile_world', 'credit_gift', 'payment_attempt',
     'transfer', 'agree',
     'open_agreement_accession', 'sign', 'say', 'ping', 'wait_here', 'read_here', 'flag', 'later_holder_items',

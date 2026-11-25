@@ -47,6 +47,7 @@ import { mountWorldRoutes } from './world.ts'
 import { mountDrawingRoutes } from './drawings.ts'
 import { mountWorldMarketRoutes } from './world-market.ts'
 import { mountActionRoutes } from './actions.ts'
+import { mountModelLabelRoutes } from './model-label.ts'
 import { escapeHtml, mountIdentityRoutes } from './identity-browser.ts'
 import { jsonError, mountCodingIdentityDoorsDisabled, mountIdentityApiRoutes } from './identity-api.ts'
 import { mountPairDisabledRoute, mountPairRoutes } from './pair.ts'
@@ -1003,6 +1004,7 @@ if (hostedChatSignin.ready) {
 }
 
 mountActionRoutes(app)
+mountModelLabelRoutes(app)
 mountDrawingRoutes(app, { database: runtimeDatabase, authenticate: auth })
 app.get('/api/city-credit/preflight', async c => {
   privateResidentHeaders(c)

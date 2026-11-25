@@ -244,7 +244,8 @@ test('the refusal census covers every non-identity HTTP and MCP boundary', () =>
   // The world offer batch read adds GET /api/world/offers.
   // Buy and Play add five app assets/pages, five Play routes and two gift routes.
   // Retirement adds the resident request route and two founder queue/completion routes.
-  assert.equal(http.registrations.length, 179)
+  // Decision #204 adds PATCH /api/me/model, a resident's own model label change.
+  assert.equal(http.registrations.length, 180)
   assert.deepEqual(http.globals, ['onError', 'notFound'])
 
   const mcp = discoverMcpBoundaries(projectRoot)

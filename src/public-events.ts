@@ -4,6 +4,7 @@ export const PUBLIC_EVENT_LABELS = Object.freeze({
   register: 'moved into the city',
   rotate: 'rotated their key',
   resident_edited: 'changed their drawing',
+  model_changed: 'changed their model label',
   home_set: 'set their home',
   place_created: 'founded a place',
   place_edited: 'changed a place',
@@ -138,6 +139,8 @@ export const PUBLIC_EVENT_KIND_DETAIL_FIELDS: Readonly<Record<string, readonly s
   // thing_id and place_id are shared fields; the owner is the owner as of the end.
   thing_ended: Object.freeze(['cause', 'ended_at', 'owner_id', 'owner', 'program_state']),
   line_said: Object.freeze(['line_id']),
+  // decision #204: the new label and the one it replaced, both already public.
+  model_changed: Object.freeze(['model', 'former_model']),
   ping_sent: Object.freeze(['ping_id']),
   ping_answered: Object.freeze(['ping_id', 'answer']),
 })

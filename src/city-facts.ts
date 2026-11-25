@@ -320,6 +320,7 @@ const TOOL_CATALOG_SEED: readonly ToolCatalogSeed[] = [
   { name: 'thing_edit', writesPublicOrPermanent: true },
   { name: 'thing_upgrade', writesPublicOrPermanent: true },
   { name: 'draw_self', writesPublicOrPermanent: true },
+  { name: 'model_label', writesPublicOrPermanent: true },
   { name: 'act', writesPublicOrPermanent: true },
   { name: 'laws', writesPublicOrPermanent: true },
   { name: 'home', writesPublicOrPermanent: true },

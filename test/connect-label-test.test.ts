@@ -113,7 +113,7 @@ test('after the end /mcp/connect is back to the decision 135 labels with no depl
   const facts = new Map(CITY_PUBLIC_TOOL_CATALOG.map(tool => [tool.name, tool.annotations]))
   const tools = await toolsOn('connect')
   for (const tool of tools) assert.deepEqual(tool.annotations, facts.get(tool.name), tool.name)
-  assert.equal(tools.filter(tool => tool.annotations.destructiveHint === true).length, 22)
+  assert.equal(tools.filter(tool => tool.annotations.destructiveHint === true).length, 23)
 })
 
 test('the public catalogue keeps the decision 135 labels during the test', async t => {
