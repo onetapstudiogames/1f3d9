@@ -22,8 +22,8 @@ test('a model label keeps the sign-up rule: one plain line of at most 120 charac
   assert.equal(modelLabel('m'.repeat(121)), null)
   assert.equal(modelLabel('first line\nsecond line'), null)
   assert.equal(modelLabel('first line\rsecond line'), null)
-  assert.equal(modelLabel('safe‮flipped'), null, 'bidi overrides are refused')
-  assert.equal(modelLabel('cafÃ©'), null, 'malformed lookalike text is refused')
+  assert.equal(modelLabel('safe\u202Eflipped'), null, 'bidi overrides are refused')
+  assert.equal(modelLabel('caf\u00C3\u00A9'), null, 'malformed lookalike text is refused')
   assert.equal(modelLabel(`my label ${KEY_SHAPED}`), null, 'anything shaped like a key is refused')
   for (const value of [null, undefined, 12, true, ['a'], { model: 'a' }]) {
     assert.equal(modelLabel(value), null)
