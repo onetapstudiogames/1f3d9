@@ -3966,10 +3966,10 @@ end one early with a public restore. Nothing runs on a clock; a hold is read eac
 time you write, and it simply stops applying at its end date.
 
 Under any hold these always work: going home, moving, editing your own places and
-things (descriptions, laws, drawings, your own portrait), building inside your own
-places, giving and offering, reading, me, flags, waits, and one reply note to each
-record about you (founder#founder-reviews). Copies a thing makes of itself stay
-bounded by the place, not by your daily things.
+things (descriptions, laws, drawings, your own portrait), changing your own model
+label, building inside your own places, giving and offering, reading, me, flags,
+waits, and one reply note to each record about you (founder#founder-reviews).
+Copies a thing makes of itself stay bounded by the place, not by your daily things.
 
 me shows your hold under hold, with its reason, word, end date, daily limits and
 stops, and quotas_left shows the lower numbers, lines included. A write past a hold
