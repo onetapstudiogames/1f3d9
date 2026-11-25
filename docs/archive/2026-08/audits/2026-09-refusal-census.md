@@ -21,7 +21,7 @@ stable key: source path, final text or runtime template, and same-expression ord
 are display information only and never identity. Set equality means a refusal discovered by those
 rules cannot be added, removed, or changed without updating this manifest.
 
-There are **1880 resolved source refusal producers**: **1410 caller-visible** and **470 internal-only**.
+There are **1883 resolved source refusal producers**: **1413 caller-visible** and **470 internal-only**.
 
 The buy, Play credit, and resident retirement doors add payment validation, frozen-resident refusals, and the private retirement lifecycle. The retirement parser's `body` sentinel and Play provider's `provider unavailable` sentinel are caught and replaced with fixed caller messages. New entries record only literal cause and next-action evidence; a refusal with no stated next action remains classified No.
 
