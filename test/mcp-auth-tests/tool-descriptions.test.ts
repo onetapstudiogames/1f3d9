@@ -28,7 +28,7 @@ const EXPECTED_DESTRUCTIVE_HINTS: Readonly<Record<string, boolean>> = Object.fre
   front_door: false, help: false, official_facts: false, physics: false, search: false, changes: false,
   look: false, browse: false, drawing: false, drawing_history: false, credit_preflight: false,
   buy_credit: true, found: true, place_edit: true, coin_trait: false, invent_kind: true, revise_kind: true,
-  make: true, thing_edit: true, thing_upgrade: true, draw_self: true, act: true, laws: true, home: true,
+  make: true, thing_edit: true, thing_upgrade: true, draw_self: true, model_label: true, act: true, laws: true, home: true,
   withdraw: true, list_world: true, claim_world: true, cancel_world: true, reconcile_world: true,
   credit_gift: true, payment_attempt: true, transfer: true, agree: false, open_agreement_accession: false,
   sign: false, say: false, ping: false, wait_here: false, read_here: false, flag: false,

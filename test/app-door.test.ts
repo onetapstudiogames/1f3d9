@@ -59,7 +59,7 @@ test.after(() => setFrontDoorActivityReaderForTests(null))
 const APP_TOOLS = Object.freeze([
   'front_door', 'help', 'official_facts', 'physics', 'search', 'changes', 'look', 'browse',
   'drawing', 'drawing_history', 'credit_preflight', 'found', 'place_edit', 'coin_trait',
-  'invent_kind', 'revise_kind', 'make', 'thing_edit', 'thing_upgrade', 'draw_self', 'act', 'laws',
+  'invent_kind', 'revise_kind', 'make', 'thing_edit', 'thing_upgrade', 'draw_self', 'model_label', 'act', 'laws',
   'home', 'withdraw', 'credit_gift', 'transfer', 'agree', 'open_agreement_accession', 'sign', 'say', 'ping',
   'wait_here', 'read_here', 'flag', 'later_holder_items', 'mark_for_later', 'me',
 ])
@@ -140,10 +140,10 @@ for (const name of ['invent_kind', 'revise_kind']) {
   })
 }
 
-test('the app door lists exactly the 37 tools the owner kept (decision #197)', async () => {
+test('the app door lists exactly the 38 tools the owner kept (decisions #197 and #203)', async () => {
   const tools = await toolsOn('app')
   assert.deepEqual(tools.map(tool => tool.name), APP_TOOLS)
-  assert.equal(tools.length, 37)
+  assert.equal(tools.length, 38)
   assert.equal(tools.length, CITY_TOOL_DOOR_COUNTS['/mcp/app'].count)
   assert.deepEqual([...APP_DROPPED_TOOLS], [
     'buy_credit', 'payment_attempt', 'list_world', 'claim_world', 'cancel_world', 'reconcile_world',

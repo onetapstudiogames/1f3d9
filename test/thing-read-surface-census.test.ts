@@ -88,6 +88,7 @@ const ROUTES: Readonly<Record<string, RouteDecision>> = Object.freeze<Record<str
     proof: [[LISTS, 'a drawing read and its history carry ends and show the stored presentation']],
   },
   'src/drawings.ts PATCH /api/me/drawing': 'none: the resident drawing answer names no thing',
+  'src/model-label.ts PATCH /api/me/model': 'none: the model label answer names no thing',
   'src/gazette-reading.ts GET /gazette/:issue_number':
     'exempt: a printed Gazette issue is history as of its print; thing_ended is the end own history row',
   'src/gazette-reading.ts GET /gazette/:issue_number/card.png': PAGE,
@@ -378,6 +379,7 @@ const TOOLS: Readonly<Record<string, readonly string[]>> = Object.freeze({
   credit_gift: ['POST /api/city-credit/gifts/:giftId/${action}'],
   credit_preflight: ['GET /api/city-credit/preflight'],
   draw_self: ['PATCH /api/me/drawing'],
+  model_label: ['PATCH /api/me/model'],
   drawing: ['GET /api/drawing/:type/:id'],
   drawing_history: ['GET /api/drawing/:type/:id/history'],
   flag: ['POST /api/flag', 'GET /api/founder/flags', 'POST /api/founder/flags/:id/handle'],

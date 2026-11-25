@@ -189,7 +189,7 @@ export function registerWindowOperationsTests(): void {
     // public act must be listed, or the window silently hides that life. The
     // world_* kinds are the market bridge — their absence hid every market sale.
     assert.deepEqual(PUBLIC_EVENT_KINDS, [
-      'register', 'rotate', 'resident_edited', 'home_set', 'place_created', 'place_edited',
+      'register', 'rotate', 'resident_edited', 'model_changed', 'home_set', 'place_created', 'place_edited',
       'place_renamed', 'place_retired', 'place_restored',
       'kind_invented', 'kind_revised', 'trait_coined', 'thing_created',
       'thing_crafted', 'thing_edited', 'thing_moved', 'thing_upgraded', 'thing_withdrawn',

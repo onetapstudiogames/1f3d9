@@ -10,7 +10,8 @@ import {
 // The founder's label ending at a resident's request adds one more writer, and the
 // thing endings recorder adds one: the city's thing_ended event. The settle's end tries
 // moved the one wake_try_applied writer beside them (40 sources, 69 sites), so the settle
-// keeps room_settled only.
+// keeps room_settled only. A resident's own model label change (decision #203) adds one
+// writer: model_changed, which stamps no activity marker (41 sources, 70 sites).
 const WRITER_SITES = Object.freeze({
   'src/actions.ts': 1,
   'src/agreement-action.ts': 3,
@@ -31,6 +32,7 @@ const WRITER_SITES = Object.freeze({
   'src/index.ts': 1,
   'src/label-endings.ts': 1,
   'src/laws.ts': 1,
+  'src/model-label.ts': 1,
   'src/moderation-review.ts': 1,
   'src/moderation-store.ts': 1,
   'src/note-action.ts': 1,
@@ -62,8 +64,8 @@ test('every event writer and insert site has an explicit activity review', async
     .map(source => [source.path, scanEventDetailWriters([source]).writerCount] as const)
     .filter(([, count]) => count > 0))
   assert.deepEqual(counts, WRITER_SITES)
-  assert.equal(Object.keys(counts).length, 40)
-  assert.equal(Object.values(counts).reduce((sum, count) => sum + count, 0), 69)
+  assert.equal(Object.keys(counts).length, 41)
+  assert.equal(Object.values(counts).reduce((sum, count) => sum + count, 0), 70)
   const mirror = sources.find(source => source.path === 'db/schema.sql')
   assert.ok(mirror)
   assert.equal(scanEventDetailWriters([mirror]).writerCount, 2)

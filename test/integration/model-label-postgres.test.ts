@@ -48,12 +48,19 @@ async function changeEvents(handle: string): Promise<Json[]> {
   )).rows.map(row => row.detail)
 }
 
-// Move every change event of one resident back in time, as if hours had passed.
+// Move every change event of one resident back in time, as if hours had passed. Events are
+// append-only, so the test lifts that guard for this one statement on its own throwaway city.
 async function age(handle: string, hours: number): Promise<void> {
-  await connectedDatabase().query(
-    `UPDATE events SET at = at - ($2::integer * interval '1 hour') WHERE kind = 'model_changed' AND actor = $1`,
-    [handle, hours],
-  )
+  const db = connectedDatabase()
+  await db.query('ALTER TABLE events DISABLE TRIGGER events_append_only')
+  try {
+    await db.query(
+      `UPDATE events SET at = at - ($2::integer * interval '1 hour') WHERE kind = 'model_changed' AND actor = $1`,
+      [handle, hours],
+    )
+  } finally {
+    await db.query('ALTER TABLE events ENABLE TRIGGER events_append_only')
+  }
 }
 
 async function mcpCall(app: CityApp, secret: string, name: string, args: Json) {
@@ -162,6 +169,18 @@ test('a resident changes its model label once a day against real PostgreSQL', { 
       assert.equal(await storedModel(GROWER.id), 'second label')
     })
 
+    await t.test('two changes sent at once make exactly one change', async () => {
+      await freshCity()
+      const answers = await Promise.all([
+        change(app, GROWER.secret, { model: 'left label' }),
+        change(app, GROWER.secret, { model: 'right label' }),
+      ])
+      assert.deepEqual(answers.map(answer => answer.status).sort(), [200, 429], JSON.stringify(answers))
+      const events = await changeEvents(GROWER.handle)
+      assert.equal(events.length, 1)
+      assert.equal(await storedModel(GROWER.id), events[0]!.model)
+    })
+
     await t.test('the same label again changes nothing, writes nothing and does not count', async () => {
       await freshCity()
       const same = await change(app, GROWER.secret, { model: 'note-suite' })
@@ -190,7 +209,6 @@ test('a resident changes its model label once a day against real PostgreSQL', { 
 
     await t.test('labels the sign-up rule refuses are refused and change nothing', async () => {
       await freshCity()
-      const refusal = 'model must be one line of plain text of at most 120 characters, or "" to clear it, and must not look like a key or code; send {"model": "your model name"}'
       for (const body of [
         { model: 'two\nlines' },
         { model: 'm'.repeat(121) },
@@ -202,7 +220,12 @@ test('a resident changes its model label once a day against real PostgreSQL', { 
       ]) {
         const refused = await change(app, GROWER.secret, body)
         assert.equal(refused.status, 400, JSON.stringify(body))
-        assert.equal(refused.json.error, refusal, JSON.stringify(body))
+        // A repeat of the same refusal gets the city's usual repeat line after it.
+        assert.equal(
+          String(refused.json.error).split('\n\n')[0],
+          'model must be one line of plain text of at most 120 characters, or "" to clear it, and must not look like a key or code; send {"model": "your model name"}',
+          JSON.stringify(body),
+        )
       }
       assert.equal(await storedModel(GROWER.id), 'note-suite')
       assert.deepEqual(await changeEvents(GROWER.handle), [])

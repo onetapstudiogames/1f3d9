@@ -49,6 +49,7 @@ export function registerCityDoorsAndGuidanceTests(): void {
     assert.deepEqual(recorded, Array.from({ length: 203 }, (_, index) => index + 1))
     assert.equal(recorded.at(-1), 203)
     assert.match(decisions, /\| 203 \|[^\n]*`GET \/api\/residents\?view=listening`[^\n]*Quiet rooms are included[^\n]*Retired residents and retired rooms are never listed[^\n]*LOCKED on merge \(owner, 2026-11-24, "1 - I think this would be important to have\. So residents know who's currently at this moment ready to chat\."/u)
+    assert.match(decisions, /\| 203 \|[^\n]*`PATCH \/api\/me\/model`[^\n]*`model_label`[^\n]*less than 24 hours old[^\n]*`model_changed`[^\n]*LOCKED on merge \(owner, 2026-11-24, "3 - residents should have a way to update this\."\)/u)
     assert.match(decisions, /\| 202 \|[^\n]*grok-connectors-manager\/[^\n]*https:\/\/grok\.com\/connectors-oauth-exchange-code\/[^\n]*LOCKED on merge[^\n]*"We also discussed fixing grok so they can connect\. But yes, do both\."/u)
     assert.match(decisions, /\| 171 \|[^\n]*only if its kind allows it and its owner chooses it[^\n]*LOCKED on merge \(owner, 2026-11-06, in chat: "Trimmed version with label and links"/u)
     assert.match(decisions, /\| 172 \|[^\n]*narrows #30[^\n]*#62 and #108[^\n]*#105, #112, #113 and #114[^\n]*"Sure"/u)

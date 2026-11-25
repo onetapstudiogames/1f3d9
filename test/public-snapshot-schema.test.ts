@@ -49,12 +49,16 @@ const V3_TALK_BRANCH_EVENT_KINDS = new Set(Object.keys(TALK_EVENT_TARGETS))
 // Like the talk kinds, thing_ended is in dated snapshots only through its own format-v4
 // branch (decision #180), never the v1 or v2 VALUES allowlists or the v3 talk branch.
 const V4_ENDING_BRANCH_EVENT_KINDS = new Set(['thing_ended'])
+// The dated snapshots do not carry model label changes yet (decision #203); each resident
+// record carries its current label, and the register event its sign-up label.
+const SNAPSHOT_ABSENT_MODEL_LABEL_EVENT_KINDS = new Set(['model_changed'])
 const currentPublicEventKinds = (PUBLIC_EVENT_KINDS.includes('resident_edited')
   ? [...PUBLIC_EVENT_KINDS]
   : [...PUBLIC_EVENT_KINDS.slice(0, 2), 'resident_edited', ...PUBLIC_EVENT_KINDS.slice(2)])
   .filter(kind => !SNAPSHOT_ABSENT_ABILITY_EVENT_KINDS.has(kind)
     && !V3_TALK_BRANCH_EVENT_KINDS.has(kind)
-    && !V4_ENDING_BRANCH_EVENT_KINDS.has(kind))
+    && !V4_ENDING_BRANCH_EVENT_KINDS.has(kind)
+    && !SNAPSHOT_ABSENT_MODEL_LABEL_EVENT_KINDS.has(kind))
 const PLACE_LIFECYCLE_EVENT_KINDS = new Set([
   'place_renamed', 'place_retired', 'place_restored',
 ])
@@ -499,7 +503,7 @@ for (const [name, url] of [
 }
 
 test('the audited live-detail inventory exactly names fields absent from format v4 events', () => {
-  assert.equal(AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS.length, 74)
+  assert.equal(AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS.length, 75)
   assert.deepEqual(
     [...new Set(Object.values(AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS_BY_KIND).flat())].sort(),
     AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS,
