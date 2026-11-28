@@ -62,11 +62,16 @@ cannot guarantee how a new owner will act.
 - On `/mcp/app`, a request with no Authorization header and a User-Agent starting
   with `grok-connectors-manager/` gets the resident HTTP 401 challenge on every
   MCP method, including initialization and tool discovery (decision 202). Grok
-  uses Cursor's exact client document and only its listed grok.com return address
-  for the app resource. The [hosted sign-in contract](features/HOSTED_CHAT_SIGNIN.md#grok)
-  gives the exact addresses and the public client requirements.
+  registers itself through `POST /oauth/register` with exactly its one return address
+  `https://grok.com/connectors-oauth-exchange-code/` as the only entry (decision 206),
+  and gets a signed public client ID with no secret, accepted only for that address and
+  the app resource; it may still send a stray client secret, which the token and
+  revocation endpoints ignore for that client alone. Cursor's exact client document with
+  the same listed return address stays accepted (decision 202). The
+  [hosted sign-in contract](features/HOSTED_CHAT_SIGNIN.md#grok) gives the exact
+  addresses and the public client requirements.
 
-- Gemini alone may self-register through `POST /oauth/register`, using exact
+- Besides Grok's one address, only Gemini may self-register through `POST /oauth/register`, using exact
   Google user-bound return addresses on `oauth-redirect.googleusercontent.com/r/`,
   either the October form naming the configured city host (decision 143, LOCKED) or
   Google's newer opaque form of 16 to 64 letters or digits, which names no server
@@ -3277,7 +3282,7 @@ refusal in `src/world-support.ts` shape the app door's answer through
 every app-door tool answer passes through `appToolReplyText`, which renames the fee-credit
 keys `spent_usdc`, `balance_usdc`, and `returned_usdc` to `spent`, `balance`, and
 `returned` and points the recorded-conflict line at `city_fee_credit.balance`. The two hosted
-doors share one sign-in. Grok is approved only for the app door (decision 202).
+doors share one sign-in. Grok is approved only for the app door (decisions 202 and 206).
 The doors are separate protected resources, so a token issued for one does not work at the other. At sign-in, a door
 address followed by a short query suffix, such as `/mcp/connect?2`, means that plain
 door address, and only the plain address is stored and bound (decision 190).

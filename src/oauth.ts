@@ -58,7 +58,7 @@ import {
   recordFailure as recordDiagnosticFailure,
   recordRegistrationRefusal,
   traceForClient,
-  type OAuthDiagnosticRecord,
+  type ClientRefusalCheck,
   type OAuthDiagnosticSink,
   type OAuthFailedCheck,
   type OAuthFailureStage,
@@ -70,12 +70,15 @@ import { PAIRING_CODE_RE } from './pair.ts'
 import { HANDLE_HTML_PATTERN, HANDLE_RULE } from './core-primitives.ts'
 import { PAIRING_LIMITS } from './pairing-limits.ts'
 import {
-  GEMINI_CLIENT_PREFIX,
   geminiRedirects,
-  geminiRegistrationShapes,
   geminiSigningReady,
+  isGrokRegistration,
   registerGeminiClient,
+  registerGrokClient,
+  registrationShapes,
   resolveGeminiClient,
+  resolveGrokClient,
+  selfRegisteredClient,
 } from './oauth-gemini.ts'
 import { OAUTH_ACCESS_TOKEN_SECONDS, OAUTH_LIMITS, OAUTH_REFRESH_TOKEN_SECONDS } from './oauth-limits.ts'
 import {
@@ -293,6 +296,12 @@ function checkStoredAuthorization(
   if (allowsClientGrant(request.client_id, request.redirect_uri, request.resource, oauth.environment)) return null
   clearSessionCookie(c)
   return invalidAuthorizationRequest(c, oauth, trace, stage)
+}
+
+/** Decisions 143 and 206: the closed check for a self-registered client ID the city did not sign, or null. */
+function unsignedRegistrationCheck(clientId: string, environment: OAuthEnvironment): ClientRefusalCheck | null {
+  const registered = selfRegisteredClient(clientId, environment)
+  return registered && !registered.client ? registered.check : null
 }
 
 function returnToChatAppAfterHour(): string {
@@ -717,6 +726,46 @@ function redirectWithDenial(
   return c.redirect(location.href, 303)
 }
 
+/** The client ID named by an HTTP Basic header (RFC 6749 section 2.3.1), or null when it names none. */
+function basicClientId(authorization: string): string | null {
+  const encoded = /^basic ([A-Za-z0-9+/]+={0,2})$/iu.exec(authorization)?.[1]
+  if (!encoded) return null
+  const decoded = Buffer.from(encoded, 'base64').toString('utf8')
+  const colon = decoded.indexOf(':')
+  if (colon < 0) return null
+  try {
+    return decodeURIComponent(decoded.slice(0, colon))
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Decision 206: a Grok self-registered client is public (`token_endpoint_auth_method: none`),
+ * yet it may still send the secret-based client authentication it asked for at registration:
+ * one `client_secret` field, or HTTP Basic naming its own client ID with an empty or made-up
+ * secret. The city issued no secret, so it ignores the one sent, and the code with its PKCE
+ * verifier, return page and resource stays the proof. Every other client, and every other
+ * Authorization header, is refused as before. Returns the form to use, naming its client and
+ * holding no secret, or null to refuse the request.
+ */
+function publicClientForm(
+  values: URLSearchParams, authorization: string | undefined, environment: OAuthEnvironment,
+): URLSearchParams | null {
+  const secrets = values.getAll('client_secret')
+  if (!authorization && secrets.length === 0) return values
+  if (secrets.length > 1) return null
+  const named = authorization ? basicClientId(authorization) : undefined
+  if (named === null) return null
+  const posted = values.getAll('client_id')
+  const clientId = posted.length === 0 ? named : posted.length === 1 ? posted[0] : undefined
+  if (!clientId || (named !== undefined && named !== clientId) || !resolveGrokClient(clientId, environment)) return null
+  const cleaned = new URLSearchParams(values)
+  cleaned.delete('client_secret')
+  cleaned.set('client_id', clientId)
+  return cleaned
+}
+
 function tokenError(c: Context, error: 'invalid_request' | 'invalid_client' | 'invalid_grant') {
   privateHeaders(c)
   return c.json({ error }, 400)
@@ -822,20 +871,29 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
       if (!body || typeof body !== 'object' || Array.isArray(body)) {
         return c.json({ error: 'invalid_client_metadata', error_description: 'Send a JSON registration of at most 8192 bytes.' }, 400)
       }
-      if ('software_statement' in body) {
+      const fields = body as Record<string, unknown>
+      const shapes = () => registrationShapes(fields, c.req.header('user-agent'), oauth.environment)
+      if ('software_statement' in fields) {
+        // Decision 206: only a statement beside a grok.com address is logged, so Grok's next try can be read.
+        recordRegistrationRefusal(oauth.diagnostics, trace, 'unapproved_software_statement',
+          () => { const described = shapes(); return described.grok ? described : null })
         return c.json({ error: 'unapproved_software_statement', error_description: 'Send the return addresses directly, without a software statement.' }, 400)
       }
-      const requested = (body as Record<string, unknown>).redirect_uris
+      const requested = fields.redirect_uris
+      // RFC 7591 lets the city replace requested metadata: both apps are public PKCE clients with no secret.
+      const registered = (clientId: string, clientName: 'Gemini' | 'Grok', redirects: readonly string[]) =>
+        c.json({ client_id: clientId, client_name: clientName, redirect_uris: redirects,
+          token_endpoint_auth_method: 'none', grant_types: ['authorization_code', 'refresh_token'],
+          response_types: ['code'], scope: OAUTH_SCOPE }, 201)
+      const grokClientId = isGrokRegistration(requested) ? registerGrokClient(oauth.environment) : null
+      if (grokClientId) return registered(grokClientId, 'Grok', [GROK_CALLBACK])
       const redirects = geminiRedirects(requested, oauth.environment, true)
       const clientId = redirects ? registerGeminiClient(redirects, oauth.environment) : null
       if (!redirects || !clientId) {
-        recordRegistrationRefusal(oauth.diagnostics, trace,
-          () => geminiRegistrationShapes(requested, c.req.header('user-agent'), oauth.environment))
+        recordRegistrationRefusal(oauth.diagnostics, trace, 'invalid_redirect_uri', shapes)
         return c.json({ error: 'invalid_redirect_uri', error_description: 'Include a Google Gemini user-bound return address, with no port, query, fragment or user information; send 1 to 10 addresses, each at most 1024 characters. Only supported addresses are registered and must fit a 2048-character client ID.' }, 400)
       }
-      return c.json({ client_id: clientId, client_name: 'Gemini', redirect_uris: redirects,
-        token_endpoint_auth_method: 'none', grant_types: ['authorization_code', 'refresh_token'],
-        response_types: ['code'], scope: OAUTH_SCOPE }, 201)
+      return registered(clientId, 'Gemini', redirects)
     } catch {
       return tokenUnavailable(c)
     }
@@ -852,9 +910,10 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
     const clientId = typeof query.client_id === 'string' ? query.client_id : ''
     let client
     let refusal: OAuthClientRefusal | undefined
-    if (clientId.startsWith(GEMINI_CLIENT_PREFIX)) {
-      client = resolveGeminiClient(clientId, oauth.environment)
-      if (!client) refusal = new OAuthClientRefusal('gemini_client_unrecognized')
+    const selfRegistered = selfRegisteredClient(clientId, oauth.environment)
+    if (selfRegistered) {
+      client = selfRegistered.client
+      if (!client) refusal = new OAuthClientRefusal(selfRegistered.check)
     } else {
       try {
         client = await resolveOAuthClient(clientId, oauth.staticClients, oauth.cimdOrigins, oauth.fetcher)
@@ -910,9 +969,9 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
     ): Response => {
       const refused = checkStoredAuthorization(c, oauth, trace, 'authorization_request', existing)
       if (refused) return refused
-      if (existing.client_id.startsWith(GEMINI_CLIENT_PREFIX) && !resolveGeminiClient(existing.client_id, oauth.environment)) {
-        return clientRefusalResponse(c, oauth, trace, 'client_metadata',
-          new OAuthClientRefusal('gemini_client_unrecognized'), returnToChatApp())
+      const unsigned = unsignedRegistrationCheck(existing.client_id, oauth.environment)
+      if (unsigned) {
+        return clientRefusalResponse(c, oauth, trace, 'client_metadata', new OAuthClientRefusal(unsigned), returnToChatApp())
       }
       if (isInitialAuthorizationRequest(existing)) return renderConsent(sessionCookie, existing)
       if (isStagedAuthorizationRequest(existing)) {
@@ -1030,7 +1089,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
       message: string,
       nextStepHtml?: string,
       callbackOrigin?: string,
-      failedCheck?: OAuthDiagnosticRecord['failed_check'],
+      failedCheck?: OAuthFailedCheck,
     ) => {
       recordFailure(oauth, trace, 'browser_approval', errorClass, status, failedCheck)
       return browserError(c, status, errorClass, message, nextStepHtml, callbackOrigin)
@@ -1095,9 +1154,9 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
       const renderCurrentTerminalProgress = async (): Promise<Response | null> => {
         const progress = await oauth.store.getAuthorizationRequestProgress({ sessionHash, csrfHash })
         if (!progress) return null
-        if (progress.request.client_id.startsWith(GEMINI_CLIENT_PREFIX) && !resolveGeminiClient(progress.request.client_id, oauth.environment)) {
-          return clientRefusalResponse(c, oauth, trace, 'browser_approval',
-            new OAuthClientRefusal('gemini_client_unrecognized'), returnToChatApp())
+        const unsigned = unsignedRegistrationCheck(progress.request.client_id, oauth.environment)
+        if (unsigned) {
+          return clientRefusalResponse(c, oauth, trace, 'browser_approval', new OAuthClientRefusal(unsigned), returnToChatApp())
         }
         trace = traceForClient(trace, publicOAuthClientId(progress.request.client_id), oauth.staticClients)
         const replay = FINAL_ACTIONS.has(action ?? '')
@@ -1120,9 +1179,9 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
       trace = traceForClient(trace, request.client_id, oauth.staticClients)
       const refused = checkStoredAuthorization(c, oauth, trace, 'browser_approval', request)
       if (refused) return refused
-      if (request.client_id.startsWith(GEMINI_CLIENT_PREFIX) && !resolveGeminiClient(request.client_id, oauth.environment)) {
-        return clientRefusalResponse(c, oauth, trace, 'browser_approval',
-          new OAuthClientRefusal('gemini_client_unrecognized'), returnToChatApp())
+      const unsigned = unsignedRegistrationCheck(request.client_id, oauth.environment)
+      if (unsigned) {
+        return clientRefusalResponse(c, oauth, trace, 'browser_approval', new OAuthClientRefusal(unsigned), returnToChatApp())
       }
       const callbackOrigin = registeredCallbackOrigin(request.redirect_uri)
 
@@ -1505,10 +1564,9 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
     }
 
     try {
-      const values = await form(c)
-      if (!values || c.req.header('authorization') || values.has('client_secret')) {
-        return fail('invalid_request')
-      }
+      const submitted = await form(c)
+      const values = submitted && publicClientForm(submitted, c.req.header('authorization'), oauth.environment)
+      if (!values) return fail('invalid_request')
       const grantType = one(values, 'grant_type', 64)
       const allowedTokenFields = grantType === 'authorization_code'
         ? ['grant_type', 'client_id', 'redirect_uri', 'resource', 'code', 'code_verifier', 'scope']
@@ -1525,7 +1583,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
       const requestedScope = values.has('scope') ? one(values, 'scope', 128) : OAUTH_SCOPE
       if (requestedScope !== OAUTH_SCOPE) return fail('invalid_request', 'invalid_scope')
       if (!clientId || !resource) return fail('invalid_client')
-      if (clientId.startsWith(GEMINI_CLIENT_PREFIX) && !resolveGeminiClient(clientId, oauth.environment)) return fail('invalid_client')
+      if (unsignedRegistrationCheck(clientId, oauth.environment)) return fail('invalid_client')
       stage = grantType === 'refresh_token' ? 'token_refresh' : 'token_exchange'
 
       if (grantType === 'authorization_code') {
@@ -1653,10 +1711,11 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
   app.post('/oauth/revoke', async c => {
     let trace = beginTrace(c)
     try {
-      const values = await form(c)
-      const clientId = values ? one(values, 'client_id', 2_048) : null
+      const submitted = await form(c)
+      const values = submitted && publicClientForm(submitted, c.req.header('authorization'), oauth.environment)
+      const clientId = submitted ? one(values ?? submitted, 'client_id', 2_048) : null
       trace = traceForClient(trace, clientId, oauth.staticClients)
-      if (!values || c.req.header('authorization') || values.has('client_secret')) {
+      if (!values) {
         recordFailure(oauth, trace, 'revocation', 'invalid_request', 200)
       } else {
         const token = one(values, 'token', 100)
@@ -1664,8 +1723,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
           token &&
           (token.startsWith(OAUTH_ACCESS_TOKEN_PREFIX) || token.startsWith(OAUTH_REFRESH_TOKEN_PREFIX)),
         )
-        if (!token || !clientId || !validToken ||
-          (clientId.startsWith(GEMINI_CLIENT_PREFIX) && !resolveGeminiClient(clientId, oauth.environment))) {
+        if (!token || !clientId || !validToken || unsignedRegistrationCheck(clientId, oauth.environment)) {
           recordFailure(oauth, trace, 'revocation', 'invalid_request', 200)
         } else if (!(await admitted(
           oauth.store,

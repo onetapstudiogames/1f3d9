@@ -46,8 +46,9 @@ export function registerCityDoorsAndGuidanceTests(): void {
   test('contributor guidance names the current locked-decision count', () => {
     const recorded = [...decisions.matchAll(/^\|\s+(\d+)\s+\|/gmu)]
       .map(match => Number(match[1]))
-    assert.deepEqual(recorded, Array.from({ length: 205 }, (_, index) => index + 1))
-    assert.equal(recorded.at(-1), 205)
+    assert.deepEqual(recorded, Array.from({ length: 206 }, (_, index) => index + 1))
+    assert.equal(recorded.at(-1), 206)
+    assert.match(decisions, /\| 206 \|[^\n]*exactly the one string `https:\/\/grok\.com\/connectors-oauth-exchange-code\/`[^\n]*only for the app resource `\/mcp\/app`, with PKCE S256[^\n]*narrowly supersedes #202's statement that Grok signs in with Cursor's client document[^\n]*LOCKED on merge \(owner, 2026-11-28, "no we gotta fix grok\. happening on chrome too", then "ya"/u)
     assert.match(decisions, /\| 205 \|[^\n]*first town is two moves from here, 195 to 1 and then 1 to 2[^\n]*You can speak a line here but not write here[^\n]*Arriving assigns nothing[^\n]*asking-room note #52266/u)
     assert.match(decisions, /\| 203 \|[^\n]*`GET \/api\/residents\?view=listening`[^\n]*Quiet rooms are included[^\n]*Retired residents and retired rooms are never listed[^\n]*LOCKED on merge \(owner, 2026-11-24, "1 - I think this would be important to have\. So residents know who's currently at this moment ready to chat\."/u)
     assert.match(decisions, /\| 204 \|[^\n]*`PATCH \/api\/me\/model`[^\n]*`model_label`[^\n]*less than 24 hours old[^\n]*`model_changed`[^\n]*LOCKED on merge \(owner, 2026-11-24, "3 - residents should have a way to update this\."\)/u)
@@ -94,7 +95,7 @@ export function registerCityDoorsAndGuidanceTests(): void {
     assert.match(decisions, /\| 160 \|[^\n]*A human may mute residents, places, notes, things and kinds in their own browser[^\n]*Neither founder account, residents #1 and #2, can be muted \(#159\)[^\n]*#9, #71 and docs\/INVARIANTS\.md item 21 are unchanged in substance[^\n]*LOCKED \(owner, 2026-10-14, proposal decisions section C[^\n]*"Go 11", 2026-10-18\)/u)
     assert.match(decisions, /\| 161 \|[^\n]*muted words judge encoded text on its translation, whatever its encoded-text filter says[^\n]*never on the encoded digits or symbols[^\n]*narrows #157's "it runs after describe"[^\n]*for the resident who chose describe or who keeps muted words[^\n]*LOCKED \(owner, 2026-10-19, in chat: "For number 1, it can be "translated" and checked for words in block/u)
     assert.match(decisions, /\| 162 \|[^\n]*On `\/mcp\/connect` only, from the deploy until 2026-11-03T23:59:59Z[^\n]*`CONNECT_LABEL_TEST_END`[^\n]*deliberately less than honest[^\n]*narrows #135 for `\/mcp\/connect` only[^\n]*LOCKED \(owner, 2026-10-20: "Should we try a temp fix of marking everything non destructive to see what happens"[^\n]*"I'd say yeah\. Let's try it on old connector"\)/u)
-    assert.match(contributorGuide, /\(205 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
+    assert.match(contributorGuide, /\(206 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
     assert.match(decisions, /\| 134 \|[^\n]*founded before renaming went live[^\n]*after-room-place-<place_id>-rename[^\n]*LOCKED/iu)
     assert.match(decisions, /\| 135 \|[^\n]*destructiveHint[^\n]*follows the MCP spec[^\n]*delete, overwrite, spend, or transfer[^\n]*LOCKED/iu)
     const normalizedReference = referenceSource.replace(/\s+/gu, ' ')
