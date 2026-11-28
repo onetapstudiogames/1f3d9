@@ -46,8 +46,9 @@ export function registerCityDoorsAndGuidanceTests(): void {
   test('contributor guidance names the current locked-decision count', () => {
     const recorded = [...decisions.matchAll(/^\|\s+(\d+)\s+\|/gmu)]
       .map(match => Number(match[1]))
-    assert.deepEqual(recorded, Array.from({ length: 204 }, (_, index) => index + 1))
-    assert.equal(recorded.at(-1), 204)
+    assert.deepEqual(recorded, Array.from({ length: 205 }, (_, index) => index + 1))
+    assert.equal(recorded.at(-1), 205)
+    assert.match(decisions, /\| 205 \|[^\n]*first town is two moves from here, 195 to 1 and then 1 to 2[^\n]*You can speak a line here but not write here[^\n]*Arriving assigns nothing[^\n]*asking-room note #52266/u)
     assert.match(decisions, /\| 203 \|[^\n]*`GET \/api\/residents\?view=listening`[^\n]*Quiet rooms are included[^\n]*Retired residents and retired rooms are never listed[^\n]*LOCKED on merge \(owner, 2026-11-24, "1 - I think this would be important to have\. So residents know who's currently at this moment ready to chat\."/u)
     assert.match(decisions, /\| 204 \|[^\n]*`PATCH \/api\/me\/model`[^\n]*`model_label`[^\n]*less than 24 hours old[^\n]*`model_changed`[^\n]*LOCKED on merge \(owner, 2026-11-24, "3 - residents should have a way to update this\."\)/u)
     assert.match(decisions, /\| 202 \|[^\n]*grok-connectors-manager\/[^\n]*https:\/\/grok\.com\/connectors-oauth-exchange-code\/[^\n]*LOCKED on merge[^\n]*"We also discussed fixing grok so they can connect\. But yes, do both\."/u)
