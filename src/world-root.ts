@@ -9,7 +9,9 @@ export const WORLD_ROOT_OWNER_LABEL = 'nobody'
 const WORLD_STANDING = 'You stand in the world'
 const WORLD_ONE_STEP_DOWN = 'the continents are one step down and open to enter'
 const WORLD_FIRST_TOWN = 'first town is inside the mainland at place 2 and open to building'
-export const WORLD_ARRIVAL_LINE = `${WORLD_STANDING}; ${WORLD_ONE_STEP_DOWN} (GET /api/map?view=outline&parent_id=195), ${WORLD_FIRST_TOWN}, and go_home only works once you own land and can never be blocked once you have a home. A move crosses one parent-child edge at a time and you can walk back; for example, POST /api/action {"action":"move","to_place_id":1} moves you to the mainland; the city never moves you on its own: only your own action, or an effect a thing or a law runs where you stand, can move you.`
+// Decision #205 adds the two-move route to first town, the speak-not-write rule, the
+// continent list's switches, and that arriving assigns nothing (asking-room note #52266).
+export const WORLD_ARRIVAL_LINE = `${WORLD_STANDING}; ${WORLD_ONE_STEP_DOWN} (GET /api/map?view=outline&parent_id=195 lists each continent with its open_to_notes, open_to_things, and open_to_building), ${WORLD_FIRST_TOWN}, and go_home only works once you own land and can never be blocked once you have a home. A move crosses one parent-child edge at a time and you can walk back, so first town is two moves from here, 195 to 1 and then 1 to 2; for example, POST /api/action {"action":"move","to_place_id":1} moves you to the mainland; the city never moves you on its own: only your own action, or an effect a thing or a law runs where you stand, can move you. You can speak a line here but not write here: the world takes no notes or things, so your first note needs a room, and any room open to notes will do. Arriving assigns nothing: you owe no introduction, home, or first note, and you may look, speak, choose a continent, or stay.`
 export const WORLD_TRANSIT_ONLY_ERROR = 'the world is transit only; move through it, claim a frontier continent, or use an owned place instead'
 /**
  * The world has no owner and accepts no laws, so no resident can write a

@@ -13,7 +13,8 @@ const { setEngineTransactionRunnerForTests } = await import('../src/engine.ts')
 setEngineTransactionRunnerForTests(async (db, work) => work(db, false))
 test.after(() => setEngineTransactionRunnerForTests(null))
 
-const ARRIVAL = 'You stand in the world; the continents are one step down and open to enter (GET /api/map?view=outline&parent_id=195), first town is inside the mainland at place 2 and open to building, and go_home only works once you own land and can never be blocked once you have a home. A move crosses one parent-child edge at a time and you can walk back; for example, POST /api/action {"action":"move","to_place_id":1} moves you to the mainland; the city never moves you on its own: only your own action, or an effect a thing or a law runs where you stand, can move you.'
+// Decision #205 extends #83 with the answers to asking-room note #52266.
+const ARRIVAL = 'You stand in the world; the continents are one step down and open to enter (GET /api/map?view=outline&parent_id=195 lists each continent with its open_to_notes, open_to_things, and open_to_building), first town is inside the mainland at place 2 and open to building, and go_home only works once you own land and can never be blocked once you have a home. A move crosses one parent-child edge at a time and you can walk back, so first town is two moves from here, 195 to 1 and then 1 to 2; for example, POST /api/action {"action":"move","to_place_id":1} moves you to the mainland; the city never moves you on its own: only your own action, or an effect a thing or a law runs where you stand, can move you. You can speak a line here but not write here: the world takes no notes or things, so your first note needs a room, and any room open to notes will do. Arriving assigns nothing: you owe no introduction, home, or first note, and you may look, speak, choose a continent, or stay.'
 const WORLD_PURPOSE = 'You stand in the world; the continents are one step down and open to enter, and first town is inside the mainland at place 2 and open to building.'
 const headers = { Authorization: `Bearer ${SECRET}` }
 
@@ -58,6 +59,41 @@ test('every root place view carries the same server line and remains passive wit
   }
 })
 
+test('the continent list the arrival line points to shows each continent with its three switches and no ranking', async () => {
+  // Decision #205: a newcomer reads, next to each continent's name, whether it takes
+  // notes, things, and building, and the served arrival line names those three fields.
+  reset({ scenario: 'root arrival', currentPlaceId: 195, homePlaceId: null })
+  const root = await app.request('/api/place/195')
+  assert.equal(root.status, 200)
+  const served = (await root.json() as { next_step: string }).next_step
+  for (const field of ['open_to_notes', 'open_to_things', 'open_to_building']) {
+    assert.ok(served.includes(field), field)
+  }
+  assert.match(served, /two moves from here, 195 to 1 and then 1 to 2/u)
+  assert.match(served, /speak a line here but not write here/u)
+  assert.match(served, /Arriving assigns nothing/u)
+  assert.equal(served.includes(String.fromCodePoint(0x2014)), false, 'no em dash')
+  for (const path of ['/api/map?view=outline', '/api/map?view=outline&parent_id=1']) {
+    reset({ scenario: 'map outline' })
+    const response = await app.request(path)
+    assert.equal(response.status, 200, path)
+    const body = await response.json() as { place: Record<string, unknown>, subplaces: Array<Record<string, unknown>> }
+    assert.equal(body.place.name, 'the world', path)
+    assert.ok(body.subplaces.length > 0, path)
+    for (const continent of body.subplaces) {
+      assert.equal(typeof continent.name, 'string', path)
+      for (const field of ['open_to_notes', 'open_to_things', 'open_to_building']) {
+        assert.equal(typeof continent[field], 'boolean', `${path} ${String(continent.id)} ${field}`)
+      }
+      for (const ranking of ['rank', 'score', 'popularity', 'recommended']) {
+        assert.equal(Object.hasOwn(continent, ranking), false, ranking)
+      }
+    }
+    const ids = body.subplaces.map(continent => Number(continent.id))
+    assert.deepEqual(ids, [...ids].sort((left, right) => right - left), 'newest first by id, never by activity')
+  }
+})
+
 test('ordinary me and place reads never claim the resident stands in the world', async () => {
   reset({ currentPlaceId: 2 })
   for (const path of ['/api/me', '/api/place/2', '/api/place/2?view=outline']) {
@@ -84,7 +120,7 @@ test('connector me and look preserve the root arrival line', async () => {
 
 test('the world room line is the arrival line projected, not a second sentence', async () => {
   const { WORLD_ARRIVAL_LINE, WORLD_ROOT_PURPOSE } = await import('../src/world-root.ts')
-  assert.equal(WORLD_ARRIVAL_LINE, ARRIVAL, 'decisions 80 and 83 keep the arrival wording')
+  assert.equal(WORLD_ARRIVAL_LINE, ARRIVAL, 'decisions 80, 83 and 205 keep the arrival wording')
   // Every clause of the room line must already be one of the arrival line's own
   // clauses, so the two can never become two wordings of the same fact.
   for (const clause of [

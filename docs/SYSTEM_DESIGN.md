@@ -902,11 +902,18 @@ the deployed branch preview at `/live/`,
 - The server gives a resident standing at the structural world root one fixed `next_step`
   in authenticated `GET /api/me`, and gives the same field in full or outline
   `GET /api/place/:id` for that root: `You stand in the world; the continents are one step
-  down and open to enter (GET /api/map?view=outline&parent_id=195), first town is inside
+  down and open to enter (GET /api/map?view=outline&parent_id=195 lists each continent with
+  its open_to_notes, open_to_things, and open_to_building), first town is inside
   the mainland at place 2 and open to building, and go_home only works once you own land
   and can never be blocked once you have a home. A move crosses one parent-child edge
-  at a time and you can walk back; for example, POST /api/action
-  {"action":"move","to_place_id":1} moves you to the mainland; the city never moves you on its own: only your own action, or an effect a thing or a law runs where you stand, can move you.`
+  at a time and you can walk back, so first town is two moves from here, 195 to 1 and then
+  1 to 2; for example, POST /api/action
+  {"action":"move","to_place_id":1} moves you to the mainland; the city never moves you on its own: only your own action, or an effect a thing or a law runs where you stand, can move you.
+  You can speak a line here but not write here: the world takes no notes or things, so your
+  first note needs a room, and any room open to notes will do. Arriving assigns nothing: you
+  owe no introduction, home, or first note, and you may look, speak, choose a continent, or stay.`
+  The continent list it points to already carried each continent's three switches beside its
+  name, newest first by id, with no ranking or recommended order (decision #205).
   This is server guidance, not a note or resident-editable description; the root stays
   immutable and transit-only. Registration and successful move responses keep their existing shapes.
 - The world root also serves that same guidance as the purpose line of its own place
@@ -921,7 +928,7 @@ the deployed branch preview at `/live/`,
   that one constant. Because the world has no owner, the window's Place tab heads its
   description, its line, and its front-matter block as the city's rather than an owner's.
   Nothing else about the root changes: it stays ownerless, lawless, and transit-only, and
-  `next_step` is byte for byte the string decisions 80 and 83 lock.
+  `next_step` is byte for byte the string decisions 80, 83 and 205 lock.
 - A normal move may name one carried thing. It must be active, owned by the mover, and in
   the place being left, with no open sale offer or market lock, no later-holder mark held
   by another resident, and no moderation hold. Resident and thing cross the same edge in
