@@ -136,8 +136,8 @@ challenge name only the plain addresses.
 | Surface | Contract |
 |---------|----------|
 | Authorization | Authorization Code flow with PKCE `S256`; exact `resource` (a connector address followed by a short query suffix counts as that address, see above), one narrow `city:resident` scope, and exact redirect matching. Verified Claude Code CIMD alone may use its two registered loopback callback hosts and `/callback` path with an ephemeral port; the chosen full URI stays bound to the code and token exchange |
-| Clients | Allowlisted chat-app client-metadata origins (CIMD) for ChatGPT, hosted Claude, Claude Code and the pinned Grok client below, pre-registered public client IDs with exact redirects, and signed Gemini registrations bound to exact Google return addresses |
-| Registration endpoint | `POST /oauth/register`, advertised in authorization-server metadata, accepts only Gemini user-bound Google redirects on Google's one return host and `/r/` path, in the October form naming this city's host or Google's newer opaque form (decisions 143 and 186); no arbitrary metadata fetch or wildcard matching. The only port-varying callback exception remains verified Claude Code |
+| Clients | Allowlisted chat-app client-metadata origins (CIMD) for ChatGPT, hosted Claude, Claude Code and the pinned Cursor client Grok may use (below), pre-registered public client IDs with exact redirects, signed Gemini registrations bound to exact Google return addresses, and signed Grok registrations bound to Grok's one return address |
+| Registration endpoint | `POST /oauth/register`, advertised in authorization-server metadata, accepts only Gemini user-bound Google redirects on Google's one return host and `/r/` path, in the October form naming this city's host or Google's newer opaque form (decisions 143 and 186), and Grok's one return address `https://grok.com/connectors-oauth-exchange-code/` as the only entry (decision 206); no arbitrary metadata fetch or wildcard matching. The only port-varying callback exception remains verified Claude Code |
 | Tokens | Access and refresh tokens are opaque random values. An authorization code is an opaque value worked out from the browser's private random sign-in cookie and its request, so a repeated last press from that browser gets the same code; only its hash is stored and it is still single use. An authorization code lasts 5 minutes and an access token lasts 10 minutes. For every chat app on both hosted doors, `refresh_token_expires_in` is 2,592,000 seconds (30 days) at issue and on every successful refresh. The sign-in and its current refresh token expire together at that deadline. If either expires while a refresh waits, the app must sign in again. |
 | Refresh throttle | Each token family (one connector connection) has its own 3,600-attempt UTC-hour allowance (decision #138, which replaces only the figure 120 in #63). Malformed, unknown, expired, and revoked refresh requests use a separate per-network junk allowance and cannot spend a live connection's capacity. A full live-connection or junk allowance returns HTTP `429`, a `Retry-After` header containing the exact seconds until the next UTC hour, `temporarily_unavailable`, and an instruction to wait that many seconds and retry. An actually invalid grant still returns `invalid_grant` |
 | Revocation | Two requests contending for the same refresh token during one live database rotation have one winner; the loser gets `invalid_grant` without revoking the winner's family. There is no grace period after the winner commits: later reuse revokes the whole family. The revocation endpoint can end a connector grant without changing the resident key |
@@ -233,8 +233,64 @@ not claim a separately recorded refresh or revoke/reconnect test.
 
 ### Grok
 
-Grok uses the public client ID `https://cursor.com/oauth/mcp-client.json` and
-only the app resource, `https://1f3d9.com/mcp/app` in production (decision 202).
+Grok signs in only for the app resource, `https://1f3d9.com/mcp/app` in production,
+and only to the return address `https://grok.com/connectors-oauth-exchange-code/`.
+On 2026-11-28 Grok's own address check showed that it signs in by registering itself
+at `POST /oauth/register` (dynamic client registration), so that is the path Grok
+uses (decision 206). The Cursor client document path below (decision 202) stays as it
+was; removing it would be a separate decision.
+
+#### Grok registration
+
+Send the JSON registration with `redirect_uris` set to exactly
+`["https://grok.com/connectors-oauth-exchange-code/"]`: one entry, byte for byte. Every
+other field is optional and is replaced by the city's own values, as RFC 7591 allows:
+any `client_name`, any `token_endpoint_auth_method` (`none`, `client_secret_post`,
+`client_secret_basic` or none at all), absent or usual `grant_types` and
+`response_types`, and unknown fields are all accepted. The answer is HTTP 201 with the
+Gemini answer's fields in the same order: `client_id`, `client_name: Grok`, that one
+`redirect_uris` entry, `token_endpoint_auth_method: none`,
+`grant_types: [authorization_code, refresh_token]`, `response_types: [code]` and
+`scope: city:resident`. No client secret is ever issued.
+
+The client ID is `grok.v1.` followed by an HMAC-SHA256 signature of the return address,
+bound to the configured public origin and made with `GEMINI_DCR_SIGNING_KEY` under its own
+`grok` label, so this city's Grok client ID is the same for every registration and a
+Gemini client ID can never pass as one. No client table, registration row, new setting or
+migration is needed, and nobody is given a new address: everyone keeps
+`https://1f3d9.com/mcp/app`. Registration shares the Gemini allowance (60 attempts per
+network per UTC hour in the same bucket), the 8192-byte JSON limit, the
+`invalid_client_metadata` answer for a bad body, the software statement refusal and the
+HTTP 503 answer when the signing key is missing. The server verifies the signature on
+authorization, browser continuation, code exchange, refresh and revocation; an ID it did
+not sign gives the usual `client_not_approved` page and logs `grok_client_unrecognized`.
+
+Any other list is answered exactly as before this rule: the Gemini path selects its
+supported Google addresses, and a list with no supported address gets the same
+`invalid_redirect_uri` answer. That covers every near miss: `http`, another grok.com
+path, a missing or doubled trailing slash, a query, a fragment, a port, user information,
+a case change, whitespace, a repeated entry or a second entry of any kind.
+
+The consent page names Grok. The code is bound to the return address, the app resource
+and the PKCE S256 challenge; the authorization page refuses `/mcp/connect`, any scope but
+`city:resident` and any PKCE method but `S256`, and a pass issued for Grok does not work at
+`/mcp/connect`.
+
+Grok's own registration body is sent server to server, so the city cannot see whether
+Grok asks for a secret-based method. For this client only, the token and revocation
+endpoints also accept one `client_secret` field with any value, or
+`Authorization: Basic` naming this client ID (form-encoded, then base64, as in RFC 6749)
+with an empty or made-up secret; HTTP Basic alone may name the client when the form has
+no `client_id`. The city never issued a secret, so it ignores the one sent and removes it
+before anything else reads the request. The code with its PKCE verifier, return address
+and resource stays the proof, exactly as for every other public client. A Basic header
+naming another client, a second `client_secret`, any other Authorization scheme, and any
+secret from any other client are refused with `invalid_request` as before.
+
+#### Grok through the Cursor client document
+
+Grok may also use the public client ID `https://cursor.com/oauth/mcp-client.json` and
+only the app resource (decision 202).
 Include `https://cursor.com` in the JSON array `HOSTED_CHAT_CIMD_ORIGINS`.
 Only the first sign-in page reads the Cursor document. It checks the client ID
 and public token exchange method, and requires `redirect_uris` to contain the exact
@@ -323,7 +379,7 @@ or `llms.txt` carries it on any door, and every door's descriptions call the cit
 ### The app door, `/mcp/app`
 
 `/mcp/app` shares first-party sign-in and residents with `/mcp/connect`
-(decision 142). Grok is an app-only client (decision 202). The app door is its own
+(decision 142). Grok is an app-only client (decisions 202 and 206). The app door is its own
 protected resource: its metadata is
 `/.well-known/oauth-protected-resource/mcp/app`, its 401 challenge names that
 metadata, and an access token issued for one hosted door does not work at the other,
@@ -386,7 +442,7 @@ The human window at `/window` stays web-only.
 Release 1 is connected by its direct custom MCP URL. Approval for a vendor's public
 connector directory is a separate distribution choice, not a dependency for this door.
 Compatible hosts may use an allowlisted client-metadata origin or a pre-registered
-public client. Only Gemini's narrow Google return-address shape may self-register.
+public client. Only Gemini's narrow Google return-address shape and Grok's one return address may self-register.
 
 ### Current ChatGPT setup and wrong-address recovery
 
@@ -439,9 +495,10 @@ A refused chat app client also records `failed_check`, one value from a closed l
 `metadata_redirect`, `metadata_not_json`, `metadata_too_large`, `metadata_invalid_json`,
 `metadata_identity_mismatch`, `auth_method_missing`, `auth_method_unsupported`,
 `public_pkce_missing`, `client_name_invalid`, `callback_invalid`,
-`claude_code_callbacks_mismatch`, `grok_callback_missing` and `gemini_client_unrecognized`.
-Once the city identifies Grok's exact client ID, its `oauth_failure` records
-carry `client_family: grok`, including temporary metadata failures. When the chat app's
+`claude_code_callbacks_mismatch`, `grok_callback_missing`, `gemini_client_unrecognized` and
+`grok_client_unrecognized`.
+Once the city identifies a Grok client ID (the pinned Cursor ID or one starting `grok.v1.`),
+its `oauth_failure` records carry `client_family: grok`, including temporary metadata failures. When the chat app's
 site answered, it also records `upstream_status_class`, only `2xx`, `3xx`, `4xx` or `5xx`.
 It never records the client address beyond its safe origin, the callback, a query value,
 the document body, or any other text the caller chose. The list lives in `src/oauth-diagnostics.ts`.
@@ -457,6 +514,16 @@ whether a port, query, fragment, user information or whitespace appeared, and wh
 was a string. It never logs any character of an address or a hash of one, so callback
 paths are still never logged; nor the network address, the raw user agent, the body or
 the client name. Successful, throttled and unavailable registrations write nothing.
+
+When a refused registration lists a return address on grok.com (decision 206), that same
+record adds `client_family: grok`, one `failed_check` from the closed list in
+`src/oauth-diagnostics.ts` (`grok_registration_extra_address`: the exact Grok address with
+another entry or a repeat; `grok_registration_inexact_address`: a grok.com address that is
+not the exact one; `grok_registration_software_statement`: a software statement was sent),
+`body_fields`, the sorted names of the body's fields that are known registration metadata,
+and `other_field_count`, how many other field names it had. It never records a value, an
+unknown field name or an address. A software statement refusal writes this record only when
+a grok.com address is listed; one without writes nothing, as before.
 
 ### Tool-call arrival and reply diagnostics
 

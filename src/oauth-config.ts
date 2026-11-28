@@ -16,6 +16,8 @@ const CHATGPT_CIMD_ORIGIN = 'https://chatgpt.com'
 const CURSOR_CIMD_ORIGIN = 'https://cursor.com'
 export const GROK_CLIENT_ID = `${CURSOR_CIMD_ORIGIN}/oauth/mcp-client.json`
 export const GROK_CALLBACK = 'https://grok.com/connectors-oauth-exchange-code/'
+/** Decision 206: the client ID prefix of a Grok self-registration (see oauth-gemini.ts). */
+export const GROK_REGISTERED_CLIENT_PREFIX = 'grok.v1.'
 // A newline cannot occur in a public client ID. This private key records that
 // the grant is bound to the exact Grok callback.
 const CHECKED_GROK_CLIENT = `${GROK_CLIENT_ID}\n${GROK_CALLBACK}`
@@ -290,11 +292,20 @@ export function oauthResources(environment: OAuthEnvironment = process.env): rea
   return Object.freeze([oauthResourceFor('connect', environment), oauthResourceFor('app', environment)])
 }
 
-/** Apply decision 202 to a grant after decision 190 has resolved its resource. */
+/**
+ * Grok's pinned Cursor client (decision 202) or a Grok self-registration (decision 206).
+ * The prefix alone only narrows a grant; the signature is checked where the client is resolved.
+ */
+export function isGrokClient(clientId: unknown): boolean {
+  return typeof clientId === 'string' &&
+    (publicOAuthClientId(clientId) === GROK_CLIENT_ID || clientId.startsWith(GROK_REGISTERED_CLIENT_PREFIX))
+}
+
+/** Apply decisions 202 and 206 to a grant after decision 190 has resolved its resource. */
 export function allowsClientGrant(
   clientId: string, redirectUri: string, resource: string, environment: OAuthEnvironment,
 ): boolean {
-  return publicOAuthClientId(clientId) !== GROK_CLIENT_ID ||
+  return !isGrokClient(clientId) ||
     (redirectUri === GROK_CALLBACK && resource === oauthResourceFor('app', environment))
 }
 

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { Context } from 'hono'
-import { GROK_CLIENT_ID } from './oauth-config.ts'
+import { GROK_CLIENT_ID, isGrokClient } from './oauth-config.ts'
 
 export type OAuthFailureStage =
   | 'authorization_request'
@@ -37,6 +37,7 @@ export const CLIENT_REFUSAL_CHECKS = [
   'claude_code_callbacks_mismatch',
   'grok_callback_missing',
   'gemini_client_unrecognized',
+  'grok_client_unrecognized',
 ] as const
 
 export type ClientRefusalCheck = typeof CLIENT_REFUSAL_CHECKS[number]
@@ -84,25 +85,60 @@ export interface RedirectShape {
   non_string: boolean
 }
 
+/**
+ * Decision 206: the closed reasons a registration naming Grok's return page was refused.
+ * The exact page with another entry or a repeat; a grok.com address that is not the exact
+ * page; or a software statement, which no registration may carry.
+ */
+export const REGISTRATION_REFUSAL_CHECKS = [
+  'grok_registration_extra_address',
+  'grok_registration_inexact_address',
+  'grok_registration_software_statement',
+] as const
+
+export type RegistrationRefusalCheck = typeof REGISTRATION_REFUSAL_CHECKS[number]
+
+/**
+ * Registration metadata names (RFC 7591 and OpenID Connect registration) a record may list.
+ * Any other field is only counted, because a field name is text the caller chose.
+ */
+export const REGISTRATION_FIELD_NAMES: ReadonlySet<string> = new Set([
+  'redirect_uris', 'token_endpoint_auth_method', 'grant_types', 'response_types', 'client_name',
+  'client_uri', 'logo_uri', 'scope', 'contacts', 'tos_uri', 'policy_uri', 'jwks_uri', 'jwks',
+  'software_id', 'software_version', 'software_statement', 'application_type',
+  'token_endpoint_auth_signing_alg', 'post_logout_redirect_uris', 'client_id', 'client_secret',
+])
+
+/** What a refused registration naming Grok's return page adds: names, never values. */
+export interface GrokRegistrationFacts {
+  check: RegistrationRefusalCheck
+  fieldNames: readonly string[]
+  otherFieldCount: number
+}
+
 export interface RegistrationShapes {
   addressCount: number
   addresses: readonly RedirectShape[]
   userAgentClass: 'OpenAuth' | 'other'
+  grok?: GrokRegistrationFacts
 }
 
-/** Decision 186: a refused Gemini registration, described by shape only. */
+/** Decision 186: a refused Gemini registration, described by shape only. Decision 206 adds the Grok fields. */
 export interface OAuthRegistrationRefusalRecord {
   event: 'oauth_failure'
   stage: 'client_registration'
   request_id: string
-  error_class: 'invalid_redirect_uri'
+  error_class: 'invalid_redirect_uri' | 'unapproved_software_statement'
   status: 400
   elapsed_ms: number
   address_count: number
   ua_class: RegistrationShapes['userAgentClass']
   addresses: readonly RedirectShape[]
+  client_family?: 'grok'
+  failed_check?: RegistrationRefusalCheck
+  body_fields?: readonly string[]
+  other_field_count?: number
   client_origin?: never
-  failed_check?: never
   upstream_status_class?: never
 }
 
@@ -149,7 +185,7 @@ export function traceForClient(
 ): OAuthRequestTrace {
   return {
     requestId, startedAt, clientOrigin: safeClientOrigin(clientId, staticClients),
-    ...(clientId === GROK_CLIENT_ID ? { clientFamily: 'grok' } : {}),
+    ...(isGrokClient(clientId) ? { clientFamily: 'grok' } : {}),
   }
 }
 
@@ -185,24 +221,35 @@ export function recordFailure(
   }
 }
 
-/** Describing the request happens inside the guard, so logging never changes the answer. */
+/**
+ * Describing the request happens inside the guard, so logging never changes the answer.
+ * A description of null writes nothing.
+ */
 export function recordRegistrationRefusal(
   diagnostics: OAuthDiagnosticSink,
   trace: OAuthRequestTrace,
-  describe: () => RegistrationShapes,
+  errorClass: OAuthRegistrationRefusalRecord['error_class'],
+  describe: () => RegistrationShapes | null,
 ): void {
   try {
     const shapes = describe()
+    if (!shapes) return
     diagnostics(Object.freeze({
       event: 'oauth_failure',
       stage: 'client_registration',
       request_id: trace.requestId,
-      error_class: 'invalid_redirect_uri',
+      error_class: errorClass,
       status: 400,
       elapsed_ms: elapsedSince(trace),
       address_count: shapes.addressCount,
       ua_class: shapes.userAgentClass,
       addresses: shapes.addresses,
+      ...(shapes.grok ? {
+        client_family: 'grok',
+        failed_check: shapes.grok.check,
+        body_fields: shapes.grok.fieldNames,
+        other_field_count: shapes.grok.otherFieldCount,
+      } as const : {}),
     }))
   } catch {
     // Diagnostics must never change OAuth behavior or expose a second error path.

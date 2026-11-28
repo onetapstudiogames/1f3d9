@@ -1,6 +1,18 @@
 import { createHmac, timingSafeEqual } from 'node:crypto'
-import { publicOrigin, type OAuthClient, type OAuthEnvironment } from './oauth-config.ts'
-import type { RedirectShape, RegistrationShapes } from './oauth-diagnostics.ts'
+import {
+  GROK_CALLBACK, GROK_REGISTERED_CLIENT_PREFIX, publicOrigin, type OAuthClient, type OAuthEnvironment,
+} from './oauth-config.ts'
+import {
+  REGISTRATION_FIELD_NAMES,
+  type ClientRefusalCheck,
+  type GrokRegistrationFacts,
+  type RedirectShape,
+  type RegistrationShapes,
+} from './oauth-diagnostics.ts'
+
+// The two chat apps that register themselves at POST /oauth/register: Gemini (decisions
+// 143 and 186) and Grok (decision 206). Both client IDs are signed with the one
+// registration key, each under its own label, so neither needs a client table.
 
 export const GEMINI_CLIENT_PREFIX = 'gemini.v1.'
 const MAX_CLIENT_ID = 2_048
@@ -71,8 +83,8 @@ function redirectShape(uri: unknown, cityHost: string): RedirectShape {
   }
 }
 
-/** Shapes of a refused registration for the host log; no submitted character survives. */
-export function geminiRegistrationShapes(value: unknown, userAgent: string | undefined, environment: OAuthEnvironment): RegistrationShapes {
+/** Shapes of a refused Gemini registration for the host log; no submitted character survives. */
+function geminiRegistrationShapes(value: unknown, userAgent: string | undefined, environment: OAuthEnvironment): RegistrationShapes {
   const list: readonly unknown[] = Array.isArray(value) ? value.slice(0, MAX_REDIRECTS) : []
   const cityHost = cityHostSegment(environment)
   return {
@@ -82,16 +94,20 @@ export function geminiRegistrationShapes(value: unknown, userAgent: string | und
   }
 }
 
-function signature(payload: string, environment: OAuthEnvironment): string {
+function signature(family: 'gemini' | 'grok', payload: string, environment: OAuthEnvironment): string {
   return createHmac('sha256', Buffer.from(environment.GEMINI_DCR_SIGNING_KEY!, 'hex'))
-    .update(`1f3d9:gemini-client:v1:${publicOrigin(environment)}:${payload}`, 'utf8')
+    .update(`1f3d9:${family}-client:v1:${publicOrigin(environment)}:${payload}`, 'utf8')
     .digest('base64url')
+}
+
+function sameSignature(presented: string, expected: string): boolean {
+  return timingSafeEqual(Buffer.from(presented, 'ascii'), Buffer.from(expected, 'ascii'))
 }
 
 export function registerGeminiClient(redirects: string[], environment: OAuthEnvironment): string | null {
   if (!geminiSigningReady(environment)) return null
   const payload = Buffer.from(JSON.stringify(redirects), 'utf8').toString('base64url')
-  const clientId = `${GEMINI_CLIENT_PREFIX}${payload}.${signature(payload, environment)}`
+  const clientId = `${GEMINI_CLIENT_PREFIX}${payload}.${signature('gemini', payload, environment)}`
   return clientId.length <= MAX_CLIENT_ID ? clientId : null
 }
 
@@ -101,7 +117,7 @@ export function resolveGeminiClient(clientId: string, environment: OAuthEnvironm
   const match = /^gemini\.v1\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]{43})$/u.exec(clientId)
   if (!match) return null
   const payload = match[1]!
-  if (!timingSafeEqual(Buffer.from(match[2]!, 'ascii'), Buffer.from(signature(payload, environment), 'ascii'))) return null
+  if (!sameSignature(match[2]!, signature('gemini', payload, environment))) return null
   try {
     const decoded = Buffer.from(payload, 'base64url').toString('utf8')
     const redirects = geminiRedirects(JSON.parse(decoded), environment)
@@ -110,4 +126,73 @@ export function resolveGeminiClient(clientId: string, environment: OAuthEnvironm
   } catch {
     return null
   }
+}
+
+/** Decision 206: Grok registers only its one return page, as exactly one byte-exact entry. */
+export function isGrokRegistration(redirects: unknown): boolean {
+  return Array.isArray(redirects) && redirects.length === 1 && redirects[0] === GROK_CALLBACK
+}
+
+/** The one Grok client ID for this city: its return page is fixed, so only the signature varies. */
+export function registerGrokClient(environment: OAuthEnvironment): string | null {
+  if (!geminiSigningReady(environment)) return null
+  return `${GROK_REGISTERED_CLIENT_PREFIX}${signature('grok', GROK_CALLBACK, environment)}`
+}
+
+export function resolveGrokClient(clientId: string, environment: OAuthEnvironment): OAuthClient | null {
+  if (!geminiSigningReady(environment)) return null
+  const match = /^grok\.v1\.([A-Za-z0-9_-]{43})$/u.exec(clientId)
+  if (!match || !sameSignature(match[1]!, signature('grok', GROK_CALLBACK, environment))) return null
+  return { clientId, clientName: 'Grok', redirectUris: [GROK_CALLBACK] }
+}
+
+/**
+ * A self-registered client ID resolved by its own rule, or null when the ID is not one.
+ * A null client means the city did not sign the ID, which `check` names for the host log.
+ */
+export function selfRegisteredClient(clientId: string, environment: OAuthEnvironment): {
+  client: OAuthClient | null
+  check: Extract<ClientRefusalCheck, 'gemini_client_unrecognized' | 'grok_client_unrecognized'>
+} | null {
+  if (clientId.startsWith(GEMINI_CLIENT_PREFIX)) {
+    return { client: resolveGeminiClient(clientId, environment), check: 'gemini_client_unrecognized' }
+  }
+  if (clientId.startsWith(GROK_REGISTERED_CLIENT_PREFIX)) {
+    return { client: resolveGrokClient(clientId, environment), check: 'grok_client_unrecognized' }
+  }
+  return null
+}
+
+function namesGrok(uri: unknown): boolean {
+  if (typeof uri !== 'string') return false
+  try {
+    const { hostname } = new URL(uri.trim())
+    return hostname === 'grok.com' || hostname.endsWith('.grok.com')
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Decision 206: the log facts for a refused registration whose return addresses name
+ * grok.com, or null when none does. Only known metadata names are listed; nothing the
+ * caller wrote as a value, and no unknown field name, reaches the record.
+ */
+function grokRegistrationFacts(body: Readonly<Record<string, unknown>>): GrokRegistrationFacts | null {
+  const requested = body.redirect_uris
+  if (!Array.isArray(requested) || !requested.some(namesGrok)) return null
+  const names = Object.keys(body)
+  const fieldNames = names.filter(name => REGISTRATION_FIELD_NAMES.has(name)).sort()
+  const check = 'software_statement' in body
+    ? 'grok_registration_software_statement'
+    : requested.includes(GROK_CALLBACK) ? 'grok_registration_extra_address' : 'grok_registration_inexact_address'
+  return { check, fieldNames, otherFieldCount: names.length - fieldNames.length }
+}
+
+/** A refused registration for the host log: Gemini's address shapes, and decision 206's facts when it names grok.com. */
+export function registrationShapes(
+  body: Readonly<Record<string, unknown>>, userAgent: string | undefined, environment: OAuthEnvironment,
+): RegistrationShapes {
+  const grok = grokRegistrationFacts(body)
+  return { ...geminiRegistrationShapes(body.redirect_uris, userAgent, environment), ...(grok ? { grok } : {}) }
 }

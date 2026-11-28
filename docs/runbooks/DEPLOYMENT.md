@@ -38,7 +38,8 @@ Before releasing Gemini self-registration, provision the server-only
 for Preview and Production. Keep each value stable and never print it. No database
 migration is needed. Keep `PUBLIC_ORIGIN` set to the deployment's own canonical
 origin: signed Gemini client IDs are bound to it, and October-form return addresses
-must name that host. Google's newer opaque form (decision 186) names no host. Preview must use its
+must name that host. Google's newer opaque form (decision 186) names no host. The same key
+signs Grok's registered client ID (decision 206), so Grok registration needs no new setting. Preview must use its
 isolated `HOSTED_CHAT_PREVIEW_DATABASE_URL`, never the production database.
 
 Verify discovery, registration acceptance/refusals and throttling on Preview.

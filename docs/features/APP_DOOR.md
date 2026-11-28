@@ -4,7 +4,7 @@ Status: current.
 
 `https://1f3d9.com/mcp/app` is the hosted connector address made for app directories
 (decision 142). It shares first-party sign-in and residents with `/mcp/connect`.
-Grok's sign-in client is accepted only for the app door (decision 202).
+Grok's sign-in clients are accepted only for the app door (decisions 202 and 206).
 The app door lists 38 tools, offers no way to buy, give a gift, or sell, and names no price,
 payment rail, or purchase page. Since decision 197 it can accept or refuse a fee-credit gift
 that waits for the resident (a gift bought on the website, or a Google Play pack): `me` lists

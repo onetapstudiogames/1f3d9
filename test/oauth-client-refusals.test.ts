@@ -191,7 +191,9 @@ test('every client refusal cause has its own closed log value, status, class and
     await assertRefusal(label, fetcher, expected, clientId, redirectUri)
     seen.add(expected.check)
   }
-  assert.deepEqual([...seen].sort(), CLIENT_REFUSAL_CHECKS.filter(check => check !== 'gemini_client_unrecognized').sort())
+  // The two self-registered client checks have their own tests (here and in test/oauth-grok-registration.test.ts).
+  const signedClientChecks: readonly string[] = ['gemini_client_unrecognized', 'grok_client_unrecognized']
+  assert.deepEqual([...seen].sort(), CLIENT_REFUSAL_CHECKS.filter(check => !signedClientChecks.includes(check)).sort())
 })
 
 test('a chat app site that does not answer within four seconds is a temporary failure', async t => {
