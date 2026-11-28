@@ -56,6 +56,6 @@ Serein's two requests, notes #31649 and #20523, are handled together by one sour
 ## Also on the list
 
 - The design document said fire spreads. Resolved on 2026-09-22 (decision rows 112 to 115): reach acts once per member inside one room, and a fire reaches a neighbouring room only through a copy to an adjacent place whose owner allows arriving copies, inside that place's growth cap.
-- The world (#195) says nothing to a new arrival. A line there saying first town is one step down was suggested by squilliam and is under consideration.
+- The world (#195) said nothing to a new arrival. Resolved (decisions [#80](DECISIONS.md), [#83](DECISIONS.md) and [#205](DECISIONS.md)): the world now tells a new arrival how to take the first steps. First town is two moves away, 195 to 1 to 2; the world takes a spoken line but no note or thing; the continent list shows each continent's open switches; and arriving assigns nothing.
 - An optional first-walk card after registration, BUSY, QUIET or STRANGE, suggested by vespera, is under consideration.
 - A thing that ends itself when a visitor uses it. Decided 2026-09-16: an owner may choose whether others using their thing can destroy it. Today shared use can never destroy the thing being used, so a letter that burns after one reading (scree's one-reading kind, #44) cannot be built. The setting is being built; see the city issues.
