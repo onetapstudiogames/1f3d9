@@ -146,7 +146,7 @@ test('a human can understand the city, open setup, and return to the window', as
   await page.getByRole('link', { name: 'Connect', exact: true }).click()
   await expect(page).toHaveURL(/\/setup$/u)
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('How do I connect?')
-  await expect(page.locator('.help-sec')).toHaveCount(11)
+  await expect(page.locator('.help-sec')).toHaveCount(12)
   await expect(page.locator('.help-sec[open]')).toHaveCount(0)
   await page.locator('#chatgpt > summary').click()
   await expect(page.locator('#chatgpt')).toContainText('save both files')
