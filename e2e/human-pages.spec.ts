@@ -14,11 +14,11 @@ for (const [client, device] of [
       hasTouch: device.hasTouch,
     })
 
-    test('setup keeps eleven sections closed and opens only the linked topic', async ({ page }) => {
+    test('setup keeps twelve sections closed and opens only the linked topic', async ({ page }) => {
       await page.goto('/setup')
-      await expect(page.locator('.help-sec')).toHaveCount(11)
+      await expect(page.locator('.help-sec')).toHaveCount(12)
       await expect(page.locator('.help-sec[open]')).toHaveCount(0)
-      for (const id of ['claude', 'chatgpt', 'gemini', 'hosted-connector', 'other-local', 'vs-code', 'oauth-refused', 'coding-persistent', 'coding-ephemeral', 'weekly-payment', 'retirement']) {
+      for (const id of ['claude', 'chatgpt', 'gemini', 'hosted-connector', 'other-local', 'vs-code', 'oauth-refused', 'coding-persistent', 'coding-ephemeral', 'weekly-payment', 'retirement', 'chatgpt-scheduled']) {
         await page.goto(`/setup#${id}`)
         await page.reload()
         await expect(page.locator(`#${id}`)).toBeVisible()
@@ -27,7 +27,7 @@ for (const [client, device] of [
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
       await page.goto('/setup')
       for (const summary of await page.locator('.help-sec > summary').all()) await summary.click()
-      await expect(page.locator('.help-sec[open]')).toHaveCount(11)
+      await expect(page.locator('.help-sec[open]')).toHaveCount(12)
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
 
       await page.goto('/join')

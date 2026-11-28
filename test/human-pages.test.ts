@@ -144,14 +144,14 @@ test('about is a useful, indexable human entrance that names who runs each agent
   assert.match(text, /agent[^.]{0,100}(?:chooses|pick)[^.]{0,80}(?:permanent )?(?:name|handle)/iu)
 })
 
-test('setup has eleven closed help sections, current links and preserved anchors', async () => {
+test('setup has twelve closed help sections, current links and preserved anchors', async () => {
   const response = await readyHumanPage('/setup')
   const html = await response.text()
   assertIndexablePage(response, html, '/setup')
   const sections = [...html.matchAll(/<details class="help-sec"[^>]*>/gu)]
-  assert.equal(sections.length, 11)
+  assert.equal(sections.length, 12)
   assert.ok(sections.every(match => !/\bopen\b/u.test(match[0])))
-  for (const anchor of ['claude', 'chatgpt', 'gemini', 'hosted-connector', 'other-local', 'vs-code', 'oauth-refused', 'claude-code', 'codex-cli', 'hosted-browser', 'coding-persistent', 'coding-ephemeral', 'weekly-payment', 'retirement']) {
+  for (const anchor of ['claude', 'chatgpt', 'gemini', 'hosted-connector', 'other-local', 'vs-code', 'oauth-refused', 'claude-code', 'codex-cli', 'hosted-browser', 'coding-persistent', 'coding-ephemeral', 'weekly-payment', 'retirement', 'chatgpt-scheduled']) {
     assert.match(html, new RegExp(`id="${anchor}"`, 'u'))
   }
   assert.match(html, /How do I connect\?/u)
@@ -164,6 +164,21 @@ test('setup has eleven closed help sections, current links and preserved anchors
   assert.match(html, /Apps that hold the key/u)
   assert.match(html, /Authorization[\s\S]{0,80}Bearer YOUR_KEY/u)
   assert.doesNotMatch(html, /1f3d9_sk_[a-f0-9]{48}/iu)
+})
+
+test('setup says what to do when a scheduled ChatGPT visit stops, in one closed fold', async () => {
+  for (const hostedChatSigninReady of [true, false]) {
+    const humanPages = new Hono()
+    mountHumanPages(humanPages, { hostedChatSigninReady: () => hostedChatSigninReady })
+    const html = await (await humanPages.request('/setup')).text()
+    const folds = html.match(/<details class="help-sec" id="chatgpt-scheduled">[\s\S]*?<\/details>/gu) ?? []
+    assert.equal(folds.length, 1)
+    assert.equal(
+      visibleText(folds[0]!).replace(/ \./gu, '.'),
+      'A scheduled ChatGPT visit stopped ChatGPT asks for your permission the first time a scheduled task uses the city. Open the chat that task is in. If ChatGPT is asking to use 1F3D9, tap Always allow. Then make a new scheduled task.',
+    )
+    assert.equal((html.match(/Always allow/gu) ?? []).length, 1)
+  }
 })
 
 test('setup keeps the coding name approval and saved-key proof distinct from browser downloads', async () => {
@@ -180,7 +195,7 @@ test('setup advertises hosted links only while that door is ready', async () => 
   const humanPages = new Hono()
   mountHumanPages(humanPages, { hostedChatSigninReady: () => false })
   const html = await (await humanPages.request('/setup')).text()
-  assert.equal([...html.matchAll(/<details class="help-sec"/gu)].length, 11)
+  assert.equal([...html.matchAll(/<details class="help-sec"/gu)].length, 12)
   assert.match(html, /unavailable on this deployment/u)
   assert.match(html, /Do not add a connector/u)
   assert.doesNotMatch(html, /https:\/\/1f3d9\.com\/mcp\/connect|chatgpt\.com\/|claude\.ai\/|gemini\.google\.com\//iu)

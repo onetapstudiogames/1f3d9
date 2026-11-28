@@ -651,6 +651,7 @@ test('the setup page opened from the app drops only the header Market item, keep
     const sections = normal.match(SETUP_HELP_SECTION) ?? []
     assert.ok(sections.some(section => section.includes('id="weekly-payment"')), label)
     assert.ok(sections.some(section => section.includes('id="retirement"')), label)
+    assert.ok(sections.some(section => section.includes('id="chatgpt-scheduled"')), label)
     for (const section of sections) assert.ok(page.includes(section), `${label}: ${section.slice(0, 60)}`)
   }
 })
