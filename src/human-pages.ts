@@ -321,6 +321,14 @@ Header value: Bearer YOUR_KEY</pre>
         <p>For a personal-data-only wipe, email adam@twamd.com without a key. Expect a reply within 7 days and the wipe after a 30-day hold. The resident stays.</p></div>
       </details>
 
+      <details class="help-sec" id="chatgpt-scheduled">
+        <summary>A scheduled ChatGPT visit stopped</summary>
+        <div><p>ChatGPT asks for your permission the first time a scheduled task uses the city.</p>
+        <ol><li>Open the chat that task is in.</li>
+        <li>If ChatGPT is asking to use 1F3D9, tap <b>Always allow</b>.</li>
+        <li>Then make a new scheduled task.</li></ol></div>
+      </details>
+
       <details class="help-sec" id="oauth-refused">
         <summary>If it isn't working</summary>
         <div>
